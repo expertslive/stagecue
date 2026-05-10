@@ -1,9 +1,47 @@
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using EventStageTimer.Api.Auth.Identity;
 using EventStageTimer.Infrastructure.Persistence;
 using EventStageTimer.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Serilog;
+using Serilog.Events;
+
+// ---------- Serilog bootstrap (catches startup errors before host wiring) ----------
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("App", "EventStageTimer")
+    .WriteTo.Console(outputTemplate:
+        "{Timestamp:HH:mm:ss.fff} [{Level:u3}] {CorrelationId} {Message:lj}{NewLine}{Exception}")
+    .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((ctx, services, cfg) =>
+{
+    cfg.MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+        .ReadFrom.Configuration(ctx.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("App", "EventStageTimer")
+        .WriteTo.Console(outputTemplate:
+            "{Timestamp:HH:mm:ss.fff} [{Level:u3}] {CorrelationId} {Message:lj} {Properties:j}{NewLine}{Exception}");
+});
+
+// OpenTelemetry → Azure Monitor when ApplicationInsights:ConnectionString is set
+var appInsightsConnString = builder.Configuration["ApplicationInsights:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(appInsightsConnString))
+{
+    builder.Services.AddOpenTelemetry().UseAzureMonitor(o =>
+    {
+        o.ConnectionString = appInsightsConnString;
+    });
+}
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
@@ -65,6 +103,10 @@ builder.Services.Configure<EventStageTimer.Api.Middleware.PublicRateLimitOptions
 builder.Services.AddScoped<EventStageTimer.Api.Audit.IAuditWriter, EventStageTimer.Api.Audit.AuditWriter>();
 builder.Services.AddHostedService<EventStageTimer.Api.BackgroundServices.SchedulerService>();
 
+// Health checks
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>("database", failureStatus: HealthStatus.Unhealthy, tags: new[] { "ready" });
+
 var app = builder.Build();
 
 // Auto-migrate when configured (default true outside Production)
@@ -87,6 +129,11 @@ if (args.Contains("--seed"))
 
 app.UseRouting();
 app.UseStaticFiles();
+app.UseMiddleware<EventStageTimer.Api.Observability.RequestCorrelationMiddleware>();
+app.UseSerilogRequestLogging(o =>
+{
+    o.MessageTemplate = "HTTP {RequestMethod} {RequestPath} → {StatusCode} in {Elapsed:0}ms";
+});
 app.UseMiddleware<EventStageTimer.Api.Middleware.PublicRateLimitMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -95,9 +142,23 @@ app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();
 app.MapControllers();
 app.MapHub<EventStageTimer.Api.Hubs.TimerHub>("/hub/timer");
 app.MapOpenApi();
+
+// Liveness probe: process responds (no DB check)
+app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => false,
+});
+// Readiness probe: DB reachable
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+});
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
 app.MapFallbackToFile("index.html");
 
-app.Run();
+try { app.Run(); }
+catch (Exception ex) { Log.Fatal(ex, "Host terminated unexpectedly"); throw; }
+finally { Log.CloseAndFlush(); }
 
 public partial class Program { }

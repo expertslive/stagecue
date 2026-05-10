@@ -24,6 +24,16 @@ resource log 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   properties: { sku: { name: 'PerGB2018' }, retentionInDays: 30 }
 }
 
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '${appName}-ai'
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: log.id
+  }
+}
+
 resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -98,6 +108,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Storage__AzureBlob__ConnectionString', secretRef: 'storage-conn' }
           { name: 'Storage__AzureBlob__Container', value: 'uploads' }
           { name: 'Auth__Mode', value: 'MagicLink' }
+          { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
+        ]
+        probes: [
+          { type: 'Liveness', httpGet: { path: '/health/live', port: 8080 }, periodSeconds: 30, failureThreshold: 3 }
+          { type: 'Readiness', httpGet: { path: '/health/ready', port: 8080 }, periodSeconds: 10, failureThreshold: 3, initialDelaySeconds: 15 }
         ]
       }]
       scale: { minReplicas: 1, maxReplicas: 3 }
