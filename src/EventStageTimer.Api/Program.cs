@@ -11,6 +11,10 @@ builder.Services.AddSignalR();
 // Tenancy
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
+// Domain services
+builder.Services.AddSingleton<EventStageTimer.Domain.Common.IClock, EventStageTimer.Domain.Common.SystemClock>();
+builder.Services.AddScoped<EventStageTimer.Infrastructure.Timer.ITimerCommandService, EventStageTimer.Infrastructure.Timer.TimerCommandService>();
+
 // Database
 builder.Services.AddDbContext<AppDbContext>(opts =>
     opts.UseSqlServer(
