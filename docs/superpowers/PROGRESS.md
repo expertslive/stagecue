@@ -1,64 +1,81 @@
-# Backend Kernel — Execution Progress
+# Execution Progress
 
-**Plan:** `docs/superpowers/plans/2026-05-10-backend-kernel.md`
 **Spec:** `docs/superpowers/specs/2026-05-10-event-stage-timer-design.md`
-**Status:** ✅ COMPLETE — all 57 plan tasks executed, 43/43 tests pass.
 
-## Test results
+## Plans
 
-- **Domain.Tests:** 27 passed, 0 failed
-- **Api.Tests:** 16 passed, 0 failed (Testcontainers SQL Server 2022)
-- **Total:** 43/43 passing
+| # | Plan | Status |
+|---|---|---|
+| 1 | `2026-05-10-backend-kernel.md` | ✅ Complete — 43/43 tests pass |
+| 2 | `2026-05-10-speaker-and-control.md` | ✅ Complete — 7/7 web unit tests, smoke verified |
+| 3 | Schedule editor + door + lobby views | Not started |
+| 4 | Branding + members + invitations + audit | Not started |
+| 5 | Container packaging + Azure deployment | Not started |
 
-## Five fixes uncovered while running tests (after the plan was written)
+## Smoke (Plan 2 verification, 2026-05-10)
 
-1. **FK cascade cycle** — `OnDelete(DeleteBehavior.Restrict)` on EventMembershipRoom→Room and InvitationRoom→Room edges to break the cascade path through Event→Room→Join.
-2. **`UseRouting()` ordering** — added explicit `app.UseRouting()` before `UseAuthentication()` so authorization handlers can read route values.
-3. **EventAccessHandler roomId fallback** — `ScheduleItemsController` route only carries `roomId`; the handler now resolves `roomId → eventId` so policies still work.
-4. **Execution strategy + transactions** — `EnableRetryOnFailure` forbids user-initiated transactions; `StartItemAsync` and `SkipNextAsync` now wrap their transactions in `db.Database.CreateExecutionStrategy().ExecuteAsync(…)`.
-5. **Version semantics** — the plan claimed `ExecuteUpdateAsync` avoids rowversion bumping. SQL Server actually bumps `rowversion` on any UPDATE regardless. Switched `RoomTimerState.Version` from `byte[]` rowversion to a manually-incremented `long`. State-changing commands increment; `SetMessage` does not — verified by `MessageVersioningTests`.
+```bash
+docker run -d -p 1433:1433 --name est-sql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Your_strong_password_123 mcr.microsoft.com/mssql/server:2022-latest
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/EventStageTimer.Api -- --seed
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/EventStageTimer.Api -- --urls http://localhost:5050
+```
 
-Plus a structural fix to the multi-tenant query filter: EF caches the compiled filter expression at model-build time, so a closure over `() => _ctx.TenantId` was evaluated once, not per query. Replaced with `AppDbContext.CurrentTenantId` property — EF parameterizes it per query. Verified by `TenantIsolationTests`.
+Verified responding:
+- `GET /health` → `{"status":"ok"}`
+- `GET /` → serves the SPA index.html (Vite-built)
+- `GET /r/WAQQ-76DB/ping` → resolves the seeded access code; returns `{"roomId":"…","eventId":"…"}` through the `PublicAccessCode` auth scheme
 
-## Known issues / decisions
+## Five Plan-1 corrections (verified by tests)
 
-- **Transitive vulnerabilities** (no upstream fixes available):
-  - `System.Security.Cryptography.Xml` — `GHSA-37gx-xxp4-5rgx`, `GHSA-w3x6-4m5h-cxqf` (high)
-  - `MimeKit` 4.8.0 (via MailKit) — `GHSA-g7hc-96xr-gvvx` (moderate)
-- **`coverlet.collector`** retained in central pinning (auto-added by xUnit templates).
-- **Two EF query-filter warnings** about `EventMembershipRoom`/`InvitationRoom` lacking filters while parents have them. Not breaking — the join tables are only accessed via authorized policies that explicitly use `IgnoreQueryFilters()`.
+1. FK cascade cycle on EventMembershipRoom/InvitationRoom→Room: `OnDelete(DeleteBehavior.Restrict)`
+2. `app.UseRouting()` must run before `UseAuthentication()` so authz handlers see route values
+3. `EventAccessHandler` falls back to `roomId → eventId` for `ScheduleItemsController`
+4. `EnableRetryOnFailure` forbids user-initiated transactions — `StartItemAsync`/`SkipNextAsync` use `CreateExecutionStrategy().ExecuteAsync(...)`
+5. SQL `rowversion` bumps on any UPDATE — switched `RoomTimerState.Version` to manual `long` incremented only on state-changing commands; verified by `MessageVersioningTests`
+
+Plus: replaced multi-tenant query-filter closure with `AppDbContext.CurrentTenantId` property so EF parameterizes per query.
+
+## Plan-2 lessons
+
+- `npm create vite@latest` in May 2026 produces TypeScript with `erasableSyntaxOnly: true` enabled; parameter properties (`constructor(public x: T)`) are not allowed. Use explicit fields + assignment.
+- Vite 8 + Vitest 2 had a `ProxyOptions` type mismatch; vitest@latest (3.x) resolved it.
+- TypeScript 7.x deprecates `baseUrl` for path mapping; `paths` works without it (relative to tsconfig).
+- `@testing-library/jest-dom` requires `globals: true` in vitest config (it calls top-level `expect.extend`).
+- `vite.config.ts` should `import { defineConfig } from "vitest/config"` when adding a `test` block, not from `vite`.
+
+## Known issues
+
+- Transitive vulnerabilities (no upstream fix yet):
+  - `System.Security.Cryptography.Xml` (`GHSA-37gx-xxp4-5rgx`, `GHSA-w3x6-4m5h-cxqf`)
+  - `MimeKit` 4.8.0 (`GHSA-g7hc-96xr-gvvx`)
+- macOS arm64 + the `mcr.microsoft.com/mssql/server:2022-latest` linux/amd64 image runs under emulation. First boot needs ~10–20 seconds before connections succeed.
 
 ## How to run
 
-Prereqs: .NET 10 SDK, Docker.
-
 ```bash
-# Start a SQL Server container
+# 1. Backend prereqs
 docker run -d -p 1433:1433 --name est-sql \
   -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Your_strong_password_123 \
   mcr.microsoft.com/mssql/server:2022-latest
 
-# Bootstrap a demo dataset
-ASPNETCORE_ENVIRONMENT=Development \
-  dotnet run --project src/EventStageTimer.Api -- --seed
+# 2. Build the SPA into wwwroot
+(cd src/web && npm install && npm run build)
 
-# Normal run
-ASPNETCORE_ENVIRONMENT=Development \
-  dotnet run --project src/EventStageTimer.Api -- --urls http://localhost:5050
+# 3. Bootstrap demo data once
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/EventStageTimer.Api -- --seed
 
-# Tests (Docker required for integration tests)
-dotnet test
+# 4. Run combined API + SPA
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/EventStageTimer.Api -- --urls http://localhost:5050
 ```
 
-## Next plans
+Visit `http://localhost:5050/`. Sign in with `owner@local` / `Strong_Pwd_123`. Open the seeded room and a speaker tab at `/r/<accessCode>/speaker` (the seed prints the code).
 
-- **Plan 2:** Speaker view + minimal control panel (React 19 + Vite + Tailwind + shadcn/ui + @microsoft/signalr)
-- **Plan 3:** Schedule editor with drag-drop, door view, lobby view, message templates UI
-- **Plan 4:** Branding + members + invitations + audit log UI
-- **Plan 5:** Container packaging + Azure deployment
+## Tests
 
-The backend kernel exposes:
+```bash
+# .NET (43 tests; integration tests need Docker)
+dotnet test
 
-- REST: `/api/events[/{id}]`, `/api/events/{id}/rooms[/{id}]`, `/api/rooms/{id}/schedule[/{id}]`, `/api/auth/{password|magic-link}/...`, `/api/setup/...`
-- SignalR: `/hub/timer` with cookie auth (operators) and `?code=…` access-code auth (public)
-- Public probe: `/r/{code}/ping` (will be replaced by real branding/snapshot endpoints in Plan 4)
+# Web (7 unit tests)
+(cd src/web && npm test -- --run)
+```
