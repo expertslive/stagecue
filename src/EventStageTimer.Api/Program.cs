@@ -77,6 +77,7 @@ if (args.Contains("--seed"))
 }
 
 app.UseRouting();
+app.UseStaticFiles();
 app.UseMiddleware<EventStageTimer.Api.Middleware.PublicRateLimitMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -86,6 +87,7 @@ app.MapControllers();
 app.MapHub<EventStageTimer.Api.Hubs.TimerHub>("/hub/timer");
 app.MapOpenApi();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

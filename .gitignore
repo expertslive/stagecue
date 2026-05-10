@@ -1,6 +1,11 @@
 # Brainstorming artifacts
 .superpowers/
 
+# Vite/SPA build output
+src/web/dist/
+src/EventStageTimer.Api/wwwroot/*
+!src/EventStageTimer.Api/wwwroot/.gitkeep
+
 # .NET
 bin/
 obj/
