@@ -744,3 +744,1175 @@ git commit -m "feat: add Event, EventMembership, EventMembershipRoom entities"
 ```
 
 ---
+
+## Task 5: Invitation entities — `Invitation`, `InvitationRoom`
+
+**Files:**
+- Create: `src/EventStageTimer.Domain/Entities/Invitation.cs`
+- Create: `src/EventStageTimer.Domain/Entities/InvitationRoom.cs`
+
+Spec anchors: §5 data model, §4.1 members/invitations.
+
+- [ ] **Step 1: Create `Invitation`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class Invitation
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid EventId { get; set; }
+    public Event Event { get; set; } = null!;
+    public required string Email { get; set; }
+    public EventRole Role { get; set; }
+    public required string Token { get; set; } // URL-safe random
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? AcceptedAt { get; set; }
+    public bool EmailSendFailed { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+
+    public ICollection<InvitationRoom> ScopedRooms { get; set; } = [];
+}
+```
+
+- [ ] **Step 2: Create `InvitationRoom` join entity**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class InvitationRoom
+{
+    public Guid InvitationId { get; set; }
+    public Invitation Invitation { get; set; } = null!;
+    public Guid RoomId { get; set; }
+    public Room Room { get; set; } = null!;
+}
+```
+
+- [ ] **Step 3: Build to verify**
+
+```bash
+dotnet build src/EventStageTimer.Domain/EventStageTimer.Domain.csproj
+```
+
+Expected: build succeeds.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add . && git commit -m "feat: add Invitation and InvitationRoom entities"
+```
+
+---
+
+## Task 6: `Room` and `ScheduleItem` entities
+
+**Files:**
+- Modify (replace stub): `src/EventStageTimer.Domain/Entities/Room.cs`
+- Create: `src/EventStageTimer.Domain/Entities/ScheduleItem.cs`
+
+Spec anchors: §5 data model, §4.5 schedule item fields.
+
+- [ ] **Step 1: Replace `Room` stub with full entity**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class Room
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid EventId { get; set; }
+    public Event Event { get; set; } = null!;
+    public required string Name { get; set; }
+    public string AccessCode { get; set; } = null!; // 8 chars, no dash
+    public int DefaultPreRollSec { get; set; } = 30;
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
+
+    public ICollection<ScheduleItem> ScheduleItems { get; set; } = [];
+    public RoomTimerState? TimerState { get; set; }
+}
+```
+
+- [ ] **Step 2: Create `ScheduleItem`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class ScheduleItem
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid RoomId { get; set; }
+    public Room Room { get; set; } = null!;
+    public int Position { get; set; }
+    public required string Title { get; set; }
+    public string? SpeakerName { get; set; }
+    public DateTime ScheduledStartUtc { get; set; }
+    public int DurationSec { get; set; }
+    public int PreRollSec { get; set; }
+    public bool AutoStart { get; set; }
+    public string? ThresholdsJson { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
+
+    public ICollection<ScheduleItemRun> Runs { get; set; } = [];
+}
+```
+
+(`RoomTimerState` and `ScheduleItemRun` are referenced — they arrive in Task 7. Build will fail until then.)
+
+- [ ] **Step 3: Defer build verification to Task 7 (combined check)**
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add . && git commit -m "feat: replace Room stub and add ScheduleItem entity"
+```
+
+---
+
+## Task 7: Runtime entities — `ScheduleItemRun`, `RoomTimerState`, `TimerPhase`
+
+**Files:**
+- Create: `src/EventStageTimer.Domain/Entities/TimerPhase.cs`
+- Create: `src/EventStageTimer.Domain/Entities/ScheduleItemRun.cs`
+- Create: `src/EventStageTimer.Domain/Entities/RoomTimerState.cs`
+
+Spec anchors: §5 data model, §6.1 phases, §6.2 transitions.
+
+- [ ] **Step 1: Create the `TimerPhase` enum**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public enum TimerPhase
+{
+    Idle = 0,
+    PreRoll = 1,
+    Running = 2,
+    Paused = 3,
+    Ended = 4,
+}
+```
+
+> Note: `Overrun` is intentionally not a stored phase — it's derived on the client when `remainingMs ≤ 0` while `Phase = Running` (spec §6.2 final paragraph).
+
+- [ ] **Step 2: Create `ScheduleItemRun`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public enum RunTrigger { Operator = 1, Scheduler = 2, Skip = 3 }
+public enum RunEndedReason { Stop = 1, Reset = 2, SkipReplaced = 3 }
+
+public class ScheduleItemRun
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid ScheduleItemId { get; set; }
+    public ScheduleItem ScheduleItem { get; set; } = null!;
+    public int RunNumber { get; set; }
+    public RunTrigger Trigger { get; set; }
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime? EndedAtUtc { get; set; }
+    public RunEndedReason? EndedReason { get; set; }
+}
+```
+
+- [ ] **Step 3: Create `RoomTimerState`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class RoomTimerState
+{
+    public Guid RoomId { get; set; } // PK
+    public Room Room { get; set; } = null!;
+    public Guid TenantId { get; set; }
+    public Guid? CurrentItemId { get; set; }
+    public ScheduleItem? CurrentItem { get; set; }
+    public Guid? CurrentRunId { get; set; }
+    public ScheduleItemRun? CurrentRun { get; set; }
+    public TimerPhase Phase { get; set; } = TimerPhase.Idle;
+    public DateTime? StartedAtUtc { get; set; }
+    public DateTime? PreRollEndsAtUtc { get; set; }
+    public DateTime? PauseStartedAtUtc { get; set; }
+    public int PausedAccumSec { get; set; }
+    public int AdjustmentSec { get; set; }
+    public string? CurrentMessage { get; set; }
+    // SQL Server rowversion (8 bytes). Mapped via [Timestamp] in the EF config.
+    public byte[] Version { get; set; } = [];
+}
+```
+
+- [ ] **Step 4: Build to verify all entities compile together**
+
+```bash
+dotnet build src/EventStageTimer.Domain/EventStageTimer.Domain.csproj
+```
+
+Expected: build succeeds.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add . && git commit -m "feat: add TimerPhase, ScheduleItemRun, RoomTimerState"
+```
+
+---
+
+## Task 8: Misc entities — `MessageTemplate`, `AuditLogEntry`, `AuthMagicLink`, `EmailOutbox`
+
+**Files:**
+- Create: `src/EventStageTimer.Domain/Entities/MessageTemplate.cs`
+- Create: `src/EventStageTimer.Domain/Entities/AuditLogEntry.cs`
+- Create: `src/EventStageTimer.Domain/Entities/AuthMagicLink.cs`
+- Create: `src/EventStageTimer.Domain/Entities/EmailOutbox.cs`
+
+Spec anchors: §5 data model, §8 background services, §9 auth.
+
+- [ ] **Step 1: Create `MessageTemplate`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class MessageTemplate
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid EventId { get; set; }
+    public Event Event { get; set; } = null!;
+    public required string Text { get; set; }
+    public int SortOrder { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+```
+
+- [ ] **Step 2: Create `AuditLogEntry`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class AuditLogEntry
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid? EventId { get; set; }
+    public Guid? RoomId { get; set; }
+    public Guid? UserId { get; set; }
+    public required string Action { get; set; } // e.g. "Start", "AdjustTime", "AutoStart"
+    public string DetailsJson { get; set; } = "{}";
+    public DateTime AtUtc { get; set; }
+}
+```
+
+- [ ] **Step 3: Create `AuthMagicLink`**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class AuthMagicLink
+{
+    public string Token { get; set; } = null!; // PK; URL-safe random, ≥32 bytes base64
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? UsedAt { get; set; }
+}
+```
+
+- [ ] **Step 4: Create `EmailOutbox` (deferred-use entity, see spec §8)**
+
+```csharp
+namespace EventStageTimer.Domain.Entities;
+
+public class EmailOutbox
+{
+    public Guid Id { get; set; }
+    public required string ToAddress { get; set; }
+    public required string Subject { get; set; }
+    public required string BodyHtml { get; set; }
+    public required string BodyText { get; set; }
+    public DateTime EnqueuedAt { get; set; }
+    public DateTime? SentAt { get; set; }
+    public string? LastError { get; set; }
+    public int RetryCount { get; set; }
+}
+```
+
+- [ ] **Step 5: Build + commit**
+
+```bash
+dotnet build src/EventStageTimer.Domain/EventStageTimer.Domain.csproj
+git add . && git commit -m "feat: add MessageTemplate, AuditLogEntry, AuthMagicLink, EmailOutbox"
+```
+
+---
+
+## Task 9: `AppDbContext` and tenancy query filter
+
+**Files:**
+- Create: `src/EventStageTimer.Infrastructure/Persistence/AppDbContext.cs`
+- Create: `src/EventStageTimer.Infrastructure/Persistence/ModelConfiguration/TenancyQueryFilters.cs`
+- Create: `src/EventStageTimer.Infrastructure/Tenancy/ITenantContext.cs`
+- Modify: `src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj` (add EF Core packages)
+
+Spec anchors: §5 data model + indexes, §9.2 tenancy.
+
+- [ ] **Step 1: Add EF Core SQL Server + Identity packages to Infrastructure**
+
+```bash
+dotnet add src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj package Microsoft.EntityFrameworkCore
+dotnet add src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj package Microsoft.EntityFrameworkCore.SqlServer
+dotnet add src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj package Microsoft.EntityFrameworkCore.Design
+dotnet add src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj package Microsoft.AspNetCore.Identity.EntityFrameworkCore
+```
+
+- [ ] **Step 2: Create `ITenantContext` (the read-only abstraction; impl in Task 11)**
+
+Create `src/EventStageTimer.Infrastructure/Tenancy/ITenantContext.cs`:
+
+```csharp
+namespace EventStageTimer.Infrastructure.Tenancy;
+
+/// <summary>Resolved tenant for the current request or background scope. Empty means "no tenant" (e.g. anonymous public lookup) — query filters then reject access to tenant-scoped tables.</summary>
+public interface ITenantContext
+{
+    Guid? TenantId { get; }
+    void Set(Guid tenantId);
+}
+```
+
+- [ ] **Step 3: Create `AppDbContext`**
+
+Create `src/EventStageTimer.Infrastructure/Persistence/AppDbContext.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence.ModelConfiguration;
+using EventStageTimer.Infrastructure.Tenancy;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Infrastructure.Persistence;
+
+public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext tenantContext)
+    : IdentityDbContext<User, IdentityRole<Guid>, Guid>(options)
+{
+    private readonly ITenantContext _tenantContext = tenantContext;
+
+    public DbSet<Tenant> Tenants => Set<Tenant>();
+    public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
+    public DbSet<Event> Events => Set<Event>();
+    public DbSet<EventMembership> EventMemberships => Set<EventMembership>();
+    public DbSet<EventMembershipRoom> EventMembershipRooms => Set<EventMembershipRoom>();
+    public DbSet<Invitation> Invitations => Set<Invitation>();
+    public DbSet<InvitationRoom> InvitationRooms => Set<InvitationRoom>();
+    public DbSet<Room> Rooms => Set<Room>();
+    public DbSet<ScheduleItem> ScheduleItems => Set<ScheduleItem>();
+    public DbSet<ScheduleItemRun> ScheduleItemRuns => Set<ScheduleItemRun>();
+    public DbSet<RoomTimerState> RoomTimerStates => Set<RoomTimerState>();
+    public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
+    public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
+    public DbSet<AuthMagicLink> AuthMagicLinks => Set<AuthMagicLink>();
+    public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
+
+    protected override void OnModelCreating(ModelBuilder b)
+    {
+        base.OnModelCreating(b); // Identity tables
+
+        // Identity tables: change keys to Guid (already because we extend IdentityUser<Guid>)
+
+        // Tenant
+        b.Entity<Tenant>(e =>
+        {
+            e.HasIndex(x => x.Slug).IsUnique();
+            e.Property(x => x.Slug).HasMaxLength(64);
+            e.Property(x => x.Name).HasMaxLength(200);
+        });
+
+        // User
+        b.Entity<User>(e =>
+        {
+            e.Property(x => x.DisplayName).HasMaxLength(200);
+        });
+
+        // TenantMembership
+        b.Entity<TenantMembership>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.UserId }).IsUnique();
+            e.HasOne(x => x.Tenant).WithMany().HasForeignKey(x => x.TenantId);
+            e.HasOne(x => x.User).WithMany(u => u.TenantMemberships).HasForeignKey(x => x.UserId);
+        });
+
+        // Event
+        b.Entity<Event>(e =>
+        {
+            e.HasIndex(x => x.TenantId);
+            e.HasIndex(x => x.LobbyAccessCode).IsUnique(); // GLOBAL uniqueness across tenants
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.TimeZone).HasMaxLength(64);
+            e.Property(x => x.LobbyAccessCode).HasMaxLength(8).IsFixedLength();
+        });
+
+        // EventMembership
+        b.Entity<EventMembership>(e =>
+        {
+            e.HasIndex(x => new { x.EventId, x.UserId }).IsUnique();
+            e.HasOne(x => x.Event).WithMany(ev => ev.Memberships).HasForeignKey(x => x.EventId);
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+        });
+
+        // EventMembershipRoom (composite key)
+        b.Entity<EventMembershipRoom>(e =>
+        {
+            e.HasKey(x => new { x.EventMembershipId, x.RoomId });
+            e.HasOne(x => x.EventMembership).WithMany(em => em.ScopedRooms).HasForeignKey(x => x.EventMembershipId);
+            e.HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId);
+        });
+
+        // Invitation / InvitationRoom
+        b.Entity<Invitation>(e =>
+        {
+            e.HasIndex(x => x.Token).IsUnique();
+            e.Property(x => x.Email).HasMaxLength(320);
+            e.Property(x => x.Token).HasMaxLength(128);
+        });
+        b.Entity<InvitationRoom>(e =>
+        {
+            e.HasKey(x => new { x.InvitationId, x.RoomId });
+            e.HasOne(x => x.Invitation).WithMany(i => i.ScopedRooms).HasForeignKey(x => x.InvitationId);
+            e.HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId);
+        });
+
+        // Room
+        b.Entity<Room>(e =>
+        {
+            e.HasIndex(x => x.EventId);
+            e.HasIndex(x => x.AccessCode).IsUnique(); // GLOBAL uniqueness across tenants
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.AccessCode).HasMaxLength(8).IsFixedLength();
+            e.HasOne(x => x.Event).WithMany(ev => ev.Rooms).HasForeignKey(x => x.EventId);
+        });
+
+        // ScheduleItem
+        b.Entity<ScheduleItem>(e =>
+        {
+            e.HasIndex(x => new { x.RoomId, x.Position });
+            e.Property(x => x.Title).HasMaxLength(300);
+            e.Property(x => x.SpeakerName).HasMaxLength(200);
+            e.HasOne(x => x.Room).WithMany(r => r.ScheduleItems).HasForeignKey(x => x.RoomId);
+        });
+
+        // ScheduleItemRun
+        b.Entity<ScheduleItemRun>(e =>
+        {
+            e.HasIndex(x => new { x.ScheduleItemId, x.RunNumber }).IsUnique();
+            e.HasOne(x => x.ScheduleItem).WithMany(s => s.Runs).HasForeignKey(x => x.ScheduleItemId);
+        });
+
+        // RoomTimerState
+        b.Entity<RoomTimerState>(e =>
+        {
+            e.HasKey(x => x.RoomId);
+            e.Property(x => x.Version).IsRowVersion();
+            e.Property(x => x.CurrentMessage).HasMaxLength(500);
+            e.HasOne(x => x.Room).WithOne(r => r.TimerState).HasForeignKey<RoomTimerState>(x => x.RoomId);
+            e.HasOne(x => x.CurrentItem).WithMany().HasForeignKey(x => x.CurrentItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.CurrentRun).WithMany().HasForeignKey(x => x.CurrentRunId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // MessageTemplate
+        b.Entity<MessageTemplate>(e =>
+        {
+            e.HasIndex(x => x.EventId);
+            e.Property(x => x.Text).HasMaxLength(500);
+        });
+
+        // AuditLogEntry
+        b.Entity<AuditLogEntry>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.AtUtc });
+            e.Property(x => x.Action).HasMaxLength(64);
+        });
+
+        // AuthMagicLink
+        b.Entity<AuthMagicLink>(e =>
+        {
+            e.HasKey(x => x.Token);
+            e.Property(x => x.Token).HasMaxLength(128);
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+        });
+
+        // EmailOutbox
+        b.Entity<EmailOutbox>(e =>
+        {
+            e.HasIndex(x => x.SentAt);
+            e.Property(x => x.ToAddress).HasMaxLength(320);
+            e.Property(x => x.Subject).HasMaxLength(500);
+        });
+
+        TenancyQueryFilters.Apply(b, () => _tenantContext.TenantId);
+    }
+}
+```
+
+- [ ] **Step 4: Create the tenancy query-filter helper**
+
+Create `src/EventStageTimer.Infrastructure/Persistence/ModelConfiguration/TenancyQueryFilters.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Infrastructure.Persistence.ModelConfiguration;
+
+internal static class TenancyQueryFilters
+{
+    public static void Apply(ModelBuilder b, Func<Guid?> currentTenantId)
+    {
+        // Apply to every entity carrying a TenantId column.
+        b.Entity<TenantMembership>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<Event>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<EventMembership>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<Invitation>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<Room>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<ScheduleItem>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<ScheduleItemRun>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<RoomTimerState>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<MessageTemplate>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+        b.Entity<AuditLogEntry>().HasQueryFilter(x => currentTenantId() == null || x.TenantId == currentTenantId());
+    }
+}
+```
+
+> The `currentTenantId() == null` clause is the "system" escape hatch used by background services (scheduler, bootstrap) that operate across tenants. Production endpoints must always set a tenant before querying.
+
+- [ ] **Step 5: Build to verify**
+
+```bash
+dotnet build src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj
+```
+
+Expected: build succeeds.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add . && git commit -m "feat: add AppDbContext with tenancy query filters and rowversion for timer state"
+```
+
+---
+
+## Task 10: First migration + apply on startup
+
+**Files:**
+- Modify: `src/EventStageTimer.Api/Program.cs`
+- Modify: `src/EventStageTimer.Api/appsettings.json` (connection string)
+- Modify: `src/EventStageTimer.Api/appsettings.Development.json`
+- Create: `src/EventStageTimer.Infrastructure/Persistence/Migrations/*` (generated)
+- Modify: `src/EventStageTimer.Api/EventStageTimer.Api.csproj` (EF design tool reference)
+
+Spec anchors: §12.4 `Database:AutoMigrate` flag.
+
+- [ ] **Step 1: Add the EF Core design package to the API host (so `dotnet ef` works) and the Identity package**
+
+```bash
+dotnet add src/EventStageTimer.Api/EventStageTimer.Api.csproj package Microsoft.EntityFrameworkCore.Design
+dotnet add src/EventStageTimer.Api/EventStageTimer.Api.csproj package Microsoft.AspNetCore.Identity.EntityFrameworkCore
+dotnet tool install --global dotnet-ef --version 10.0.0 || dotnet tool update --global dotnet-ef --version 10.0.0
+```
+
+- [ ] **Step 2: Add a no-op `ITenantContext` registration so `AppDbContext` can be resolved at design time**
+
+For migration generation we need a tenant context, but design-time has no request scope. Add a transient default that just returns null:
+
+Edit `src/EventStageTimer.Infrastructure/Tenancy/ITenantContext.cs` (already created in T9) and add a sibling default:
+
+Create `src/EventStageTimer.Infrastructure/Tenancy/DesignTimeTenantContext.cs`:
+
+```csharp
+namespace EventStageTimer.Infrastructure.Tenancy;
+
+/// <summary>Used by EF design-time tooling and tests that don't need tenant scoping.</summary>
+public sealed class NullTenantContext : ITenantContext
+{
+    public Guid? TenantId { get; private set; }
+    public void Set(Guid tenantId) => TenantId = tenantId;
+}
+```
+
+- [ ] **Step 3: Wire DI in `Program.cs` and configure connection string**
+
+Replace `src/EventStageTimer.Api/Program.cs` with:
+
+```csharp
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Tenancy;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+builder.Services.AddOpenApi();
+builder.Services.AddSignalR();
+
+// Tenancy
+builder.Services.AddScoped<ITenantContext, NullTenantContext>();
+
+// Database
+builder.Services.AddDbContext<AppDbContext>(opts =>
+    opts.UseSqlServer(
+        builder.Configuration.GetConnectionString("Default")
+            ?? throw new InvalidOperationException("ConnectionStrings:Default is required"),
+        sql => sql.EnableRetryOnFailure(maxRetryCount: 5)));
+
+var app = builder.Build();
+
+// Auto-migrate when configured (default true outside Production)
+var autoMigrate = builder.Configuration.GetValue<bool?>("Database:AutoMigrate")
+    ?? !builder.Environment.IsProduction();
+if (autoMigrate)
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
+app.MapControllers();
+app.MapOpenApi();
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.Run();
+
+public partial class Program { }
+```
+
+- [ ] **Step 4: Provide a default connection string and the dev override**
+
+Replace `src/EventStageTimer.Api/appsettings.json`:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
+  "ConnectionStrings": {
+    "Default": "Server=(local);Database=EventStageTimer;Integrated Security=true;TrustServerCertificate=true"
+  },
+  "Database": {
+    "AutoMigrate": true
+  }
+}
+```
+
+Replace `src/EventStageTimer.Api/appsettings.Development.json`:
+
+```json
+{
+  "ConnectionStrings": {
+    "Default": "Server=localhost,1433;Database=EventStageTimer.Dev;User Id=sa;Password=Your_strong_password_123;TrustServerCertificate=true"
+  },
+  "Database": {
+    "AutoMigrate": true
+  }
+}
+```
+
+> The dev connection string assumes the docker-compose SQL Server we'll add in Plan 5. For local dev right now, run `docker run -d -p 1433:1433 -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Your_strong_password_123 mcr.microsoft.com/mssql/server:2022-latest`.
+
+- [ ] **Step 5: Generate the initial migration**
+
+```bash
+dotnet ef migrations add Initial \
+  --project src/EventStageTimer.Infrastructure \
+  --startup-project src/EventStageTimer.Api \
+  --output-dir Persistence/Migrations
+```
+
+Expected: a new folder `src/EventStageTimer.Infrastructure/Persistence/Migrations/` with two files (`<timestamp>_Initial.cs` and `AppDbContextModelSnapshot.cs`).
+
+- [ ] **Step 6: Verify migration applies against a real SQL Server**
+
+```bash
+dotnet run --project src/EventStageTimer.Api -- --urls http://localhost:5050 &
+SERVER_PID=$!
+sleep 3
+curl -sf http://localhost:5050/health
+kill $SERVER_PID
+```
+
+Expected: `{"status":"ok"}` and the database `EventStageTimer.Dev` exists with `__EFMigrationsHistory` populated.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add . && git commit -m "feat: wire DbContext + initial migration with auto-apply on startup"
+```
+
+---
+
+## Task 11: Tenant resolution middleware and `TenantContext`
+
+**Files:**
+- Create: `src/EventStageTimer.Infrastructure/Tenancy/TenantContext.cs`
+- Create: `src/EventStageTimer.Api/Middleware/TenantResolutionMiddleware.cs`
+- Modify: `src/EventStageTimer.Api/Program.cs`
+
+Spec anchors: §9.2 multi-tenancy, §11 access codes resolving tenant from URL.
+
+- [ ] **Step 1: Replace `NullTenantContext` registration with the request-scoped `TenantContext`**
+
+Create `src/EventStageTimer.Infrastructure/Tenancy/TenantContext.cs`:
+
+```csharp
+namespace EventStageTimer.Infrastructure.Tenancy;
+
+public sealed class TenantContext : ITenantContext
+{
+    public Guid? TenantId { get; private set; }
+    public void Set(Guid tenantId)
+    {
+        if (TenantId is { } existing && existing != tenantId)
+            throw new InvalidOperationException($"TenantContext already set to {existing}; cannot change to {tenantId}");
+        TenantId = tenantId;
+    }
+}
+```
+
+- [ ] **Step 2: Add the resolution middleware**
+
+Create `src/EventStageTimer.Api/Middleware/TenantResolutionMiddleware.cs`:
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Tenancy;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Middleware;
+
+public sealed class TenantResolutionMiddleware(RequestDelegate next)
+{
+    public async Task InvokeAsync(HttpContext ctx, ITenantContext tenantContext, AppDbContext db)
+    {
+        // 1. Authenticated requests carry a "tid" claim.
+        var tid = ctx.User.FindFirstValue("tid");
+        if (Guid.TryParse(tid, out var fromClaim))
+        {
+            tenantContext.Set(fromClaim);
+            await next(ctx);
+            return;
+        }
+
+        // 2. Public surfaces resolve tenant from the access code in the path.
+        if (TryExtractAccessCode(ctx.Request.Path, out var raw) && AccessCode.TryParse(raw, out var code))
+        {
+            // Look up across tenants without filter (system-level read).
+            var tenantId = await db.Rooms
+                .IgnoreQueryFilters()
+                .Where(r => r.AccessCode == code.Value)
+                .Select(r => (Guid?)r.TenantId)
+                .FirstOrDefaultAsync();
+            tenantId ??= await db.Events
+                .IgnoreQueryFilters()
+                .Where(e => e.LobbyAccessCode == code.Value)
+                .Select(e => (Guid?)e.TenantId)
+                .FirstOrDefaultAsync();
+
+            if (tenantId is { } resolved)
+                tenantContext.Set(resolved);
+        }
+
+        await next(ctx);
+    }
+
+    private static bool TryExtractAccessCode(PathString path, out string raw)
+    {
+        raw = "";
+        var s = path.Value ?? "";
+        // /r/{code}/...  or  /e/{code}/...
+        if ((s.StartsWith("/r/", StringComparison.Ordinal) || s.StartsWith("/e/", StringComparison.Ordinal)) && s.Length > 3)
+        {
+            var rest = s[3..];
+            var slash = rest.IndexOf('/');
+            raw = slash < 0 ? rest : rest[..slash];
+            return true;
+        }
+        return false;
+    }
+}
+```
+
+- [ ] **Step 3: Register middleware and switch `ITenantContext` to scoped impl**
+
+Edit `src/EventStageTimer.Api/Program.cs`:
+
+```csharp
+// existing: builder.Services.AddScoped<ITenantContext, NullTenantContext>();
+// change to:
+builder.Services.AddScoped<ITenantContext, EventStageTimer.Infrastructure.Tenancy.TenantContext>();
+```
+
+And in the request pipeline, before `MapControllers`:
+
+```csharp
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();
+```
+
+> Authentication/authorization handlers are added in Tasks 24+; they need to run before the middleware so `ctx.User` is populated.
+
+- [ ] **Step 4: Build to verify**
+
+```bash
+dotnet build EventStageTimer.sln
+```
+
+Expected: build succeeds (auth handlers not yet registered, but middleware doesn't hard-fail on absence).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add . && git commit -m "feat: tenant resolution middleware + TenantContext scoped impl"
+```
+
+---
+
+## Task 12: `TimerStateMachine` — pure domain logic
+
+**Files:**
+- Create: `src/EventStageTimer.Domain/Timer/TimerStateMachine.cs`
+- Create: `src/EventStageTimer.Domain/Timer/TimerCommandError.cs`
+- Test: `tests/EventStageTimer.Domain.Tests/Timer/TimerStateMachineTests.cs`
+
+Spec anchors: §6.1, §6.2 transition table, §4.5 command semantics.
+
+- [ ] **Step 1: Define the error enum**
+
+Create `src/EventStageTimer.Domain/Timer/TimerCommandError.cs`:
+
+```csharp
+namespace EventStageTimer.Domain.Timer;
+
+public enum TimerCommandError
+{
+    InvalidPhase = 1,
+    StaleVersion = 2,
+    AdjustmentOutOfBounds = 3,
+    NoActiveItem = 4,
+    NoNextItem = 5,
+}
+```
+
+- [ ] **Step 2: Write failing tests for the simplest transitions first**
+
+Create `tests/EventStageTimer.Domain.Tests/Timer/TimerStateMachineTests.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Domain.Timer;
+using FluentAssertions;
+using Xunit;
+
+namespace EventStageTimer.Domain.Tests.Timer;
+
+public class TimerStateMachineTests
+{
+    private static readonly DateTime Now = new(2026, 5, 10, 14, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void StartItem_with_no_preroll_goes_directly_to_Running()
+    {
+        var state = NewIdleState();
+        var item = NewItem(durationSec: 1800, preRollSec: 0);
+
+        var result = TimerStateMachine.StartItem(state, item, Now);
+
+        result.IsSuccess.Should().BeTrue();
+        state.Phase.Should().Be(TimerPhase.Running);
+        state.StartedAtUtc.Should().Be(Now);
+        state.PreRollEndsAtUtc.Should().BeNull();
+        state.CurrentItemId.Should().Be(item.Id);
+    }
+
+    [Fact]
+    public void StartItem_with_preroll_goes_to_PreRoll_with_correct_end_time()
+    {
+        var state = NewIdleState();
+        var item = NewItem(durationSec: 1800, preRollSec: 30);
+
+        TimerStateMachine.StartItem(state, item, Now);
+
+        state.Phase.Should().Be(TimerPhase.PreRoll);
+        state.PreRollEndsAtUtc.Should().Be(Now.AddSeconds(30));
+        state.StartedAtUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public void StartItem_rejects_when_not_idle()
+    {
+        var state = NewIdleState();
+        state.Phase = TimerPhase.Running;
+
+        var result = TimerStateMachine.StartItem(state, NewItem(), Now);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(TimerCommandError.InvalidPhase);
+    }
+
+    [Fact]
+    public void ExpirePreRoll_sets_StartedAtUtc_to_PreRollEndsAtUtc_not_now()
+    {
+        var state = NewIdleState();
+        state.Phase = TimerPhase.PreRoll;
+        state.CurrentItemId = Guid.NewGuid();
+        state.PreRollEndsAtUtc = Now;
+
+        // Tick fires 800ms late.
+        TimerStateMachine.ExpirePreRoll(state, Now.AddMilliseconds(800));
+
+        state.Phase.Should().Be(TimerPhase.Running);
+        state.StartedAtUtc.Should().Be(Now); // NOT Now+800ms
+        state.PreRollEndsAtUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public void Pause_then_Resume_accumulates_paused_seconds()
+    {
+        var state = RunningState(startedAt: Now);
+
+        TimerStateMachine.Pause(state, Now.AddSeconds(60));
+        TimerStateMachine.Resume(state, Now.AddSeconds(75));
+
+        state.Phase.Should().Be(TimerPhase.Running);
+        state.PausedAccumSec.Should().Be(15);
+        state.PauseStartedAtUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public void AdjustTime_within_bounds_succeeds()
+    {
+        var state = RunningState(startedAt: Now);
+        var r = TimerStateMachine.AdjustTime(state, deltaSec: 30);
+        r.IsSuccess.Should().BeTrue();
+        state.AdjustmentSec.Should().Be(30);
+    }
+
+    [Fact]
+    public void AdjustTime_beyond_24h_is_rejected()
+    {
+        var state = RunningState(startedAt: Now);
+        var r = TimerStateMachine.AdjustTime(state, deltaSec: 25 * 3600);
+        r.IsFailure.Should().BeTrue();
+        r.Error.Should().Be(TimerCommandError.AdjustmentOutOfBounds);
+    }
+
+    [Fact]
+    public void Reset_clears_timer_fields_and_message_but_preserves_CurrentItemId()
+    {
+        var state = RunningState(startedAt: Now);
+        state.CurrentMessage = "Wrap up";
+        state.AdjustmentSec = 30;
+
+        TimerStateMachine.Reset(state);
+
+        state.Phase.Should().Be(TimerPhase.Idle);
+        state.StartedAtUtc.Should().BeNull();
+        state.AdjustmentSec.Should().Be(0);
+        state.CurrentMessage.Should().BeNull();
+        state.CurrentItemId.Should().NotBeNull(); // preserved
+    }
+
+    private static RoomTimerState NewIdleState() => new()
+    {
+        RoomId = Guid.NewGuid(),
+        Phase = TimerPhase.Idle,
+    };
+
+    private static RoomTimerState RunningState(DateTime startedAt) => new()
+    {
+        RoomId = Guid.NewGuid(),
+        Phase = TimerPhase.Running,
+        CurrentItemId = Guid.NewGuid(),
+        StartedAtUtc = startedAt,
+    };
+
+    private static ScheduleItem NewItem(int durationSec = 1800, int preRollSec = 30) => new()
+    {
+        Id = Guid.NewGuid(),
+        Title = "Test",
+        DurationSec = durationSec,
+        PreRollSec = preRollSec,
+    };
+}
+```
+
+- [ ] **Step 3: Run tests — expect compilation failure (no `TimerStateMachine` yet)**
+
+```bash
+dotnet test tests/EventStageTimer.Domain.Tests
+```
+
+Expected: build error referencing `TimerStateMachine`.
+
+- [ ] **Step 4: Implement `TimerStateMachine`**
+
+Create `src/EventStageTimer.Domain/Timer/TimerStateMachine.cs`:
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+
+namespace EventStageTimer.Domain.Timer;
+
+/// <summary>
+/// Pure functions that mutate a <see cref="RoomTimerState"/> per the spec's transition table.
+/// No I/O — all DB writes happen in the calling service. <see cref="ScheduleItemRun"/> rows
+/// are created/closed by the caller using the lifecycle returned via out parameters.
+/// </summary>
+public static class TimerStateMachine
+{
+    private const int MaxAdjustmentSec = 24 * 3600;
+    private const int MinAdjustmentSec = -24 * 3600;
+
+    public static Result<Unit, TimerCommandError> StartItem(RoomTimerState state, ScheduleItem item, DateTime nowUtc)
+    {
+        if (state.Phase != TimerPhase.Idle)
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+
+        state.CurrentItemId = item.Id;
+        state.AdjustmentSec = 0;
+        state.PausedAccumSec = 0;
+        state.PauseStartedAtUtc = null;
+
+        if (item.PreRollSec > 0)
+        {
+            state.Phase = TimerPhase.PreRoll;
+            state.PreRollEndsAtUtc = nowUtc.AddSeconds(item.PreRollSec);
+            state.StartedAtUtc = null;
+        }
+        else
+        {
+            state.Phase = TimerPhase.Running;
+            state.StartedAtUtc = nowUtc;
+            state.PreRollEndsAtUtc = null;
+        }
+        return Result<Unit, TimerCommandError>.Ok(Unit.Value);
+    }
+
+    public static void ExpirePreRoll(RoomTimerState state, DateTime nowUtc)
+    {
+        if (state.Phase != TimerPhase.PreRoll || state.PreRollEndsAtUtc is null) return;
+        // Use the intended expiry timestamp, not nowUtc — avoids drift from 1Hz tick.
+        state.StartedAtUtc = state.PreRollEndsAtUtc.Value;
+        state.PreRollEndsAtUtc = null;
+        state.Phase = TimerPhase.Running;
+    }
+
+    public static Result<Unit, TimerCommandError> Pause(RoomTimerState state, DateTime nowUtc)
+    {
+        if (state.Phase != TimerPhase.Running)
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+        state.PauseStartedAtUtc = nowUtc;
+        state.Phase = TimerPhase.Paused;
+        return Result<Unit, TimerCommandError>.Ok(Unit.Value);
+    }
+
+    public static Result<Unit, TimerCommandError> Resume(RoomTimerState state, DateTime nowUtc)
+    {
+        if (state.Phase != TimerPhase.Paused || state.PauseStartedAtUtc is null)
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+        var pausedFor = (int)(nowUtc - state.PauseStartedAtUtc.Value).TotalSeconds;
+        state.PausedAccumSec += pausedFor;
+        state.PauseStartedAtUtc = null;
+        state.Phase = TimerPhase.Running;
+        return Result<Unit, TimerCommandError>.Ok(Unit.Value);
+    }
+
+    public static Result<Unit, TimerCommandError> Stop(RoomTimerState state)
+    {
+        if (state.Phase is not (TimerPhase.Running or TimerPhase.Paused))
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+        state.Phase = TimerPhase.Ended;
+        state.StartedAtUtc = null;
+        state.PausedAccumSec = 0;
+        state.AdjustmentSec = 0;
+        state.PauseStartedAtUtc = null;
+        return Result<Unit, TimerCommandError>.Ok(Unit.Value);
+    }
+
+    public static void Reset(RoomTimerState state)
+    {
+        state.Phase = TimerPhase.Idle;
+        state.StartedAtUtc = null;
+        state.PreRollEndsAtUtc = null;
+        state.PauseStartedAtUtc = null;
+        state.PausedAccumSec = 0;
+        state.AdjustmentSec = 0;
+        state.CurrentMessage = null;
+        // CurrentItemId preserved per spec §6.2
+    }
+
+    public static Result<Unit, TimerCommandError> AdjustTime(RoomTimerState state, int deltaSec)
+    {
+        if (state.Phase is not (TimerPhase.Running or TimerPhase.Paused))
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+        var proposed = state.AdjustmentSec + deltaSec;
+        if (proposed < MinAdjustmentSec || proposed > MaxAdjustmentSec)
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.AdjustmentOutOfBounds);
+        state.AdjustmentSec = proposed;
+        return Result<Unit, TimerCommandError>.Ok(Unit.Value);
+    }
+
+    public static Result<Unit, TimerCommandError> SetExactRemaining(
+        RoomTimerState state, ScheduleItem currentItem, int remainingSec, DateTime nowUtc)
+    {
+        if (state.Phase is not (TimerPhase.Running or TimerPhase.Paused))
+            return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+        if (state.StartedAtUtc is null) return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
+
+        var elapsed = (nowUtc - state.StartedAtUtc.Value).TotalSeconds - state.PausedAccumSec;
+        var currentEffectiveTotal = currentItem.DurationSec + state.AdjustmentSec;
+        var currentRemaining = currentEffectiveTotal - elapsed;
+        var delta = remainingSec - (int)currentRemaining;
+        return AdjustTime(state, delta);
+    }
+
+    public static void SetMessage(RoomTimerState state, string? message)
+    {
+        state.CurrentMessage = string.IsNullOrEmpty(message) ? null : message;
+        // Last-write-wins. Caller does NOT bump Version.
+    }
+}
+
+public readonly record struct Unit
+{
+    public static readonly Unit Value = default;
+}
+```
+
+- [ ] **Step 5: Run tests — expect green**
+
+```bash
+dotnet test tests/EventStageTimer.Domain.Tests
+```
+
+Expected: 8 tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add . && git commit -m "feat: TimerStateMachine pure-domain logic with TDD coverage"
+```
+
+---
