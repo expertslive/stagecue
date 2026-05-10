@@ -18,7 +18,7 @@ A web application that drives countdown timers for speakers at events. Operators
 - Per-event branding: theme tokens (with defaults that can be overridden) + uploaded logo
 - Full RBAC: tenant-level admins, event-level roles (`EventAdmin`, `RoomOperator` (optionally room-scoped), `Viewer`), email-based invitations
 - Two auth modes: cloud (email magic link, requires SMTP) and local (email + password)
-- Public surfaces accessible via short, regeneratable access codes (no auth)
+- Public surfaces accessible via 8-character regeneratable access codes (`XXXX-XXXX`), with rate limiting on lookup (no auth)
 - Server-authoritative timer state with client-side ticking driven by a measured server-clock skew (resilient to brief network drops)
 - Audit log of operator actions
 - Multi-tenant data isolation
@@ -46,12 +46,12 @@ A web application that drives countdown timers for speakers at events. Operators
 ### Event level (assigned per event via `EventMembership`)
 
 - **Event Admin** — full control over one event: rooms, schedules, themes, members, message templates, all rooms' live controls.
-- **Room Operator** — runs live controls for one or more specific rooms (`ScopedRoomIds`). Can edit schedule items for those rooms during the event but cannot reconfigure rooms, change theme, or invite users.
+- **Room Operator** — runs live controls for one or more specific rooms (scoped via the `EventMembershipRoom` join table). Can edit schedule items for those rooms during the event but cannot reconfigure rooms, change theme, or invite users.
 - **Viewer** — read-only access to the event's control panel (sees current state across all rooms but cannot push any control).
 
 ### Public (no account)
 
-Public surfaces (speaker view, door view, lobby view) are accessed by URLs containing 6-character access codes (base32, omitting `0`, `1`, `I`, `O`). Each room has its own access code; each event has a separate code for the lobby. Access codes are regeneratable; old codes are invalidated immediately on regeneration.
+Public surfaces (speaker view, door view, lobby view) are accessed by URLs containing 8-character access codes formatted as `XXXX-XXXX` for readability (base32 alphabet, omitting `0`, `1`, `I`, `O`). Each room has its own access code; each event has a separate code for the lobby. Access codes are regeneratable; old codes are invalidated immediately on regeneration.
 
 ## 4. Functional requirements
 
@@ -59,7 +59,7 @@ Public surfaces (speaker view, door view, lobby view) are accessed by URLs conta
 
 A single-page React application. After login, the user sees a list of events they have access to. Selecting an event opens its dashboard.
 
-**Event dashboard** — top-level view. Shows all rooms in a grid; each tile shows current item, phase (Idle / PreRoll / Running / Paused / Overrun / Ended), remaining time, and a "Open room control" link. Updates in realtime via SignalR.
+**Event dashboard** — top-level view. Shows all rooms in a grid; each tile shows current item, phase (Idle / PreRoll / Running / Paused / Ended; Overrun rendered as a visual flag on Running), remaining time, and a "Open room control" link. Updates in realtime via SignalR.
 
 **Room control** — focused view for one room. Includes:
 - The current item (title, speaker, scheduled start, duration, pre-roll, thresholds)
@@ -120,22 +120,26 @@ Updates in realtime.
 
 ### 4.5 Live controls — semantics
 
-- **Start** — only valid when phase is `Idle`. If the current schedule item has a pre-roll, transitions to `PreRoll` with `PreRollEndsAtUtc = now + preRollSec`. Otherwise transitions to `Running` and sets `StartedAtUtc = now`. If no current item is set, the server picks the next item: the first one (by `Position`) whose `ScheduledStartUtc ≥ now` if any, otherwise the last item that has not yet ended.
+All start paths funnel through a single internal command: `StartItem(roomId, scheduleItemId, trigger)`. Only operator `Start` (without an explicit item) auto-selects.
+
+- **Start (operator, with explicit item)** — operator clicks Start on a specific schedule item. Calls `StartItem(roomId, scheduleItemId, Operator)`.
+- **Start (operator, auto-select)** — operator clicks Start with no specific item. Server resolves the target item: the first item (by `Position`) that has no `ScheduleItemRun` with a non-null `EndedAtUtc` and whose `ScheduledStartUtc ≥ now − 30 min`, falling back to the lowest-`Position` item with no run history. Then calls `StartItem(roomId, resolvedItemId, Operator)`. The resolved item is shown to the operator for confirmation before invocation.
+- **`StartItem(roomId, scheduleItemId, trigger)` (internal)** — only valid when phase is `Idle`. If the item's `PreRollSec > 0`, transitions to `PreRoll` with `PreRollEndsAtUtc = now + PreRollSec`. Otherwise transitions to `Running` and sets `StartedAtUtc = now`. Inserts a `ScheduleItemRun` row with `StartedAtUtc`, `Trigger ∈ {Operator, Scheduler, Skip}`, and `RunNumber` (incremented per re-run of the same item). Sets `RoomTimerState.CurrentItemId`.
 - **Pause** — valid in `Running`. Sets `PauseStartedAtUtc = now`, phase = `Paused`.
-- **Resume** — valid in `Paused`. Computes `PausedAccumSec += (now - PauseStartedAtUtc)`, clears `PauseStartedAtUtc`, phase = `Running`.
-- **Stop** — valid in `Running`, `Paused`, or implied `Overrun`. Phase = `Ended`. The operator chooses what to do next (start next item or leave idle).
-- **Reset** — any phase. Clears `StartedAtUtc`, `PausedAccumSec`, `AdjustmentSec`, `CurrentMessage`. Phase = `Idle`. Schedule item assignment is preserved.
-- **Skip-next** — equivalent to Stop + Start on the next schedule item by `Position`.
+- **Resume** — valid in `Paused`. Computes `PausedAccumSec += (now − PauseStartedAtUtc)`, clears `PauseStartedAtUtc`, phase = `Running`.
+- **Stop** — valid in `Running` or `Paused`. Phase = `Ended`. Closes the active `ScheduleItemRun` with `EndedAtUtc = now`. The operator chooses what to do next (start next item or leave idle).
+- **Reset** — any phase. Clears `StartedAtUtc`, `PreRollEndsAtUtc`, `PauseStartedAtUtc`, `PausedAccumSec`, `AdjustmentSec`, `CurrentMessage`. Phase = `Idle`. The active `ScheduleItemRun` (if any) is closed with `EndedAtUtc = now` and `EndedReason = Reset`. The same item can be started again.
+- **Skip-next** — atomic Stop-current + `StartItem(nextItemByPosition, Skip)` within one transaction. The "next item" is the next `ScheduleItem` by `Position` that does not yet have a non-null-`EndedAtUtc` run.
 - **Adjust ±N** — adds N seconds to `AdjustmentSec`. Allowed in `Running` and `Paused`. Adjustments are cumulative and bounded so total adjustment cannot bring remaining below `−24h` or above `+24h`.
 - **Set exact remaining** — computes a delta from the current effective remaining and applies it to `AdjustmentSec`. Allowed in `Running` and `Paused`.
-- **Set message** — updates `CurrentMessage`. Allowed in any phase (operator may want to display a message even before a session starts). Empty string clears.
-- **Clear message** — sets `CurrentMessage` to null.
+- **Set message** — updates `CurrentMessage`. Allowed in any phase. Empty string clears. **Last-write-wins**: does not require a `version`, does not bump `RoomTimerState.Version`. Broadcast to clients via `MessageChanged`. Rationale: there's no meaningful merge conflict; making messages versioned would cause the operator's *next* state command to fail with stale-version after they typed a message.
+- **Clear message** — sets `CurrentMessage` to null. Same versioning treatment as Set message.
 
-Every live-control invocation writes an `AuditLogEntry` with `Action`, `RoomId`, `UserId`, and a JSON `Details` blob (e.g., `{ "deltaSec": 30 }`).
+Every live-control invocation writes an `AuditLogEntry` with `Action`, `RoomId`, `UserId` (or null for `Trigger=Scheduler`), and a JSON `Details` blob (e.g., `{ "deltaSec": 30, "scheduleItemId": "…" }`).
 
 ### 4.6 Scheduler (background)
 
-A `BackgroundService` ticks once per second. For each room with a schedule item that has `AutoStart = true` and `ScheduledStartUtc - PreRollSec ≤ now`, if the room is `Idle`, it triggers the same Start path as the operator action (with `UserId = null`, `Action = "AutoStart"`). The scheduler is idempotent: it does nothing if the room is already non-idle. With a single instance this is sufficient. For scaled-out deployments (deferred), a leader-election layer over Redis or SQL Server distributed locks would coordinate which instance fires.
+A `BackgroundService` ticks once per second. For each schedule item with `AutoStart = true`, no closed `ScheduleItemRun` for it, and `ScheduledStartUtc − PreRollSec ≤ now`, if the parent room is `Idle`, the scheduler calls `StartItem(roomId, scheduleItemId, Trigger=Scheduler)` with `UserId = null`. Because the scheduler always passes an explicit `scheduleItemId`, it is immune to the auto-select ambiguity that would arise if schedules drift or overlap. The scheduler is idempotent: it does nothing if the room is non-idle (operator already started something) or if the item already has an open run. With a single instance this is sufficient. For scaled-out deployments (deferred), a leader-election layer over Redis or SQL Server distributed locks would coordinate which instance fires.
 
 ## 5. Data model
 
@@ -147,16 +151,20 @@ All entities below carry `TenantId` (except `Tenant` itself); EF Core global que
 | `User` | `Id`, `Email` (unique), `PasswordHash?`, `DisplayName` | `PasswordHash` populated only in local-auth mode |
 | `TenantMembership` | `TenantId`, `UserId`, `Role` (`Owner` / `Admin`) | |
 | `Event` | `Id`, `TenantId`, `Name`, `TimeZone` (IANA), `StartsAtUtc`, `EndsAtUtc`, `LobbyAccessCode`, `LogoBlobKey?`, `ThemeJson`, `DefaultThresholdsJson` | |
-| `EventMembership` | `EventId`, `UserId`, `Role` (`EventAdmin` / `RoomOperator` / `Viewer`), `ScopedRoomIds?` (CSV or join table) | |
-| `Invitation` | `Id`, `EventId`, `Email`, `Role`, `ScopedRoomIds?`, `Token`, `ExpiresAt`, `AcceptedAt?` | |
-| `Room` | `Id`, `EventId`, `Name`, `AccessCode` (6-char base32), `DefaultPreRollSec` | |
+| `EventMembership` | `Id`, `EventId`, `UserId`, `Role` (`EventAdmin` / `RoomOperator` / `Viewer`) | Room scoping is in `EventMembershipRoom` |
+| `EventMembershipRoom` | `EventMembershipId`, `RoomId` | Join table; populated only for `RoomOperator` rows. Empty set ≡ no room access |
+| `Invitation` | `Id`, `EventId`, `Email`, `Role`, `Token`, `ExpiresAt`, `AcceptedAt?` | |
+| `InvitationRoom` | `InvitationId`, `RoomId` | Join table mirroring `EventMembershipRoom`; copied to `EventMembershipRoom` when accepted |
+| `Room` | `Id`, `EventId`, `Name`, `AccessCode` (8-char base32, stored without dash), `DefaultPreRollSec` | |
 | `ScheduleItem` | `Id`, `RoomId`, `Position`, `Title`, `SpeakerName?`, `ScheduledStartUtc`, `DurationSec`, `PreRollSec`, `AutoStart`, `ThresholdsJson?` | `ThresholdsJson` overrides `Event.DefaultThresholdsJson` if present |
+| `ScheduleItemRun` | `Id`, `ScheduleItemId`, `RunNumber`, `Trigger` (`Operator` / `Scheduler` / `Skip`), `StartedAtUtc`, `EndedAtUtc?`, `EndedReason?` (`Stop` / `Reset` / `SkipReplaced`) | Append-only history; an item can be re-run after Reset (incrementing `RunNumber`). Drives "what has run?" queries |
 | `MessageTemplate` | `Id`, `EventId`, `Text`, `SortOrder` | |
-| `RoomTimerState` | `RoomId` (PK), `CurrentItemId?`, `Phase`, `StartedAtUtc?`, `PreRollEndsAtUtc?`, `PauseStartedAtUtc?`, `PausedAccumSec`, `AdjustmentSec`, `CurrentMessage?`, `Version` (rowversion) | One row per room; the only entity that changes during a live session |
+| `RoomTimerState` | `RoomId` (PK), `CurrentItemId?`, `CurrentRunId?`, `Phase`, `StartedAtUtc?`, `PreRollEndsAtUtc?`, `PauseStartedAtUtc?`, `PausedAccumSec`, `AdjustmentSec`, `CurrentMessage?`, `Version` (rowversion) | One row per room. `Version` bumps on state-machine transitions, time adjustments, and item changes — but **not** on `CurrentMessage` updates (last-write-wins) |
 | `AuditLogEntry` | `Id`, `TenantId`, `EventId?`, `RoomId?`, `UserId?`, `Action`, `DetailsJson`, `AtUtc` | Append-only |
 | `AuthMagicLink` | `Token` (PK), `UserId`, `ExpiresAt`, `UsedAt?` | SaaS / cloud auth only |
+| `EmailOutbox` | `Id`, `ToAddress`, `Subject`, `BodyHtml`, `BodyText`, `EnqueuedAt`, `SentAt?`, `LastError?`, `RetryCount` | Optional v1.5 — see §8 |
 
-Indexes: `User.Email` (unique), `Event.TenantId`, `Room.EventId`, `Room.AccessCode` (unique within tenant), `Event.LobbyAccessCode` (unique within tenant), `ScheduleItem.RoomId + Position`, `AuditLogEntry.TenantId + AtUtc`.
+Indexes: `User.Email` (unique), `Event.TenantId`, `Room.EventId`, **`Room.AccessCode` (unique globally across tenants)**, **`Event.LobbyAccessCode` (unique globally across tenants)**, `ScheduleItem.RoomId + Position`, `ScheduleItemRun.ScheduleItemId + RunNumber` (unique), `EventMembershipRoom.EventMembershipId + RoomId` (unique), `AuditLogEntry.TenantId + AtUtc`.
 
 `ThemeJson` is a JSON object of token-name → CSS-value overrides; missing tokens fall back to a built-in default set (defined in the React app and re-exported as a JSON literal so the spec stays single-source).
 
@@ -168,17 +176,19 @@ Indexes: `User.Email` (unique), `Event.TenantId`, `Room.EventId`, `Room.AccessCo
 
 ### 6.2 Transitions
 
+All transitions go through the internal `StartItem(roomId, scheduleItemId, trigger)` command (for entries into `PreRoll`/`Running`) or operator commands `Pause`, `Resume`, `Stop`, `Reset`, `SkipNext`. `ScheduleItemRun` rows track which items have actually run.
+
 | From | To | Trigger | Side effects |
 |---|---|---|---|
-| `Idle` | `PreRoll` | Operator Start with `PreRollSec > 0`; or scheduler at `ScheduledStart - PreRollSec` if `AutoStart` | Set `CurrentItemId`, `PreRollEndsAtUtc = now + PreRollSec`, `Phase = PreRoll` |
-| `Idle` | `Running` | Operator Start with `PreRollSec = 0` | Set `CurrentItemId`, `StartedAtUtc = now`, `Phase = Running` |
-| `PreRoll` | `Running` | `now ≥ PreRollEndsAtUtc` (server-side `Tick`) | Set `StartedAtUtc = now`, clear `PreRollEndsAtUtc`, `Phase = Running` |
+| `Idle` | `PreRoll` | `StartItem` with `PreRollSec > 0` (operator or scheduler) | Set `CurrentItemId`, `PreRollEndsAtUtc = now + PreRollSec`, `Phase = PreRoll`. **Insert `ScheduleItemRun`** with `StartedAtUtc = now`, `Trigger`, `RunNumber` |
+| `Idle` | `Running` | `StartItem` with `PreRollSec = 0` | Set `CurrentItemId`, `StartedAtUtc = now`, `Phase = Running`. **Insert `ScheduleItemRun`** as above |
+| `PreRoll` | `Running` | `now ≥ PreRollEndsAtUtc` (server-side `Tick`) | Set **`StartedAtUtc = PreRollEndsAtUtc`** (not `now` — the 1Hz tick can fire up to ~1s late), clear `PreRollEndsAtUtc`, `Phase = Running` |
 | `Running` | `Paused` | Operator Pause | Set `PauseStartedAtUtc = now` |
 | `Paused` | `Running` | Operator Resume | `PausedAccumSec += now − PauseStartedAtUtc`; clear `PauseStartedAtUtc` |
-| `Running` / `Paused` | `Ended` | Operator Stop | Clear `StartedAtUtc`, `PausedAccumSec`, `AdjustmentSec`, `PauseStartedAtUtc` |
-| `Running` / `Paused` / `Ended` | next item's `PreRoll` or `Running` | Operator Skip-next or scheduler advances | Atomic Stop-current + Start-next within one transaction; Skip-next on `Ended` is functionally an explicit advance |
-| any | `Idle` | Operator Reset | Clear `StartedAtUtc`, `PreRollEndsAtUtc`, `PauseStartedAtUtc`, `PausedAccumSec`, `AdjustmentSec`, `CurrentMessage`; preserve `CurrentItemId` |
-| `Ended` | `PreRoll` / `Running` / `Idle` | Operator advances or scheduler picks next item | As Idle → PreRoll/Running |
+| `Running` / `Paused` | `Ended` | Operator Stop | Clear `StartedAtUtc`, `PausedAccumSec`, `AdjustmentSec`, `PauseStartedAtUtc`. **Close active `ScheduleItemRun`** with `EndedAtUtc = now`, `EndedReason = Stop` |
+| `Running` / `Paused` / `Ended` | next item's `PreRoll` or `Running` | Operator Skip-next | Atomic `Stop` (`EndedReason = SkipReplaced`) + `StartItem(nextItemId, Trigger=Skip)` within one transaction |
+| any | `Idle` | Operator Reset | Clear `StartedAtUtc`, `PreRollEndsAtUtc`, `PauseStartedAtUtc`, `PausedAccumSec`, `AdjustmentSec`, `CurrentMessage`; preserve `CurrentItemId`. **Close active `ScheduleItemRun`** with `EndedAtUtc = now`, `EndedReason = Reset`. The same item may be re-run (`RunNumber + 1`) |
+| `Ended` | `PreRoll` / `Running` | Operator or scheduler triggers `StartItem` for any item | As Idle → PreRoll/Running |
 
 `Overrun` is not a stored phase. While `Phase = Running`, if the client computes remaining ≤ 0, it switches the visual mode to overrun (count-up, `--overrun` color). This avoids a server write at the moment time runs out and keeps the model simple.
 
@@ -206,7 +216,19 @@ else:  # Idle, Ended
     remainingMs = 0
 ```
 
-The active threshold is the one with the largest `secondsRemaining` such that `secondsRemaining*1000 ≥ remainingMs`. Its `colorToken` is read from CSS variables on the speaker view.
+**Threshold selection.** Each threshold means "apply when remaining is at or below `secondsRemaining`." The active threshold is therefore the **smallest** `secondsRemaining` value among those satisfying `secondsRemaining*1000 ≥ remainingMs` — i.e., the tightest threshold we've crossed but not yet crossed past. If no threshold matches (`remainingMs > max(secondsRemaining)`), the display uses `--primary` (the normal running color). When `remainingMs ≤ 0`, the display uses `--overrun` regardless of thresholds.
+
+Worked example with thresholds `[{600, "warning"}, {120, "danger"}, {30, "final"}]`:
+
+| `remainingMs` | Matching thresholds (s ≥ remaining) | Active (smallest matching) | Color token |
+|---|---|---|---|
+| 700,000 ms | none | — | `--primary` |
+| 500,000 ms | 600 | 600 | `--warning` |
+| 100,000 ms | 600, 120 | **120** | `--danger` |
+| 20,000 ms | 600, 120, 30 | **30** | `--final` |
+| ≤ 0 ms | (any) | — | `--overrun` |
+
+Color tokens are read from CSS variables on the speaker view.
 
 ### 6.4 Snapshot payload (over SignalR)
 
@@ -216,7 +238,8 @@ When a client joins a room group or a transition occurs, the server pushes the f
 {
   "roomId": "…",
   "currentItem": { "id": "…", "title": "…", "speakerName": "…", "scheduledStartUtc": "…", "durationSec": 1800, "preRollSec": 30, "thresholds": [...] },
-  "nextItem":     { "title": "…", "scheduledStartUtc": "…" } ,
+  "currentRunId": "…",
+  "nextItem":     { "id": "…", "title": "…", "scheduledStartUtc": "…" },
   "phase": "Running",
   "startedAtUtc": "2026-05-10T13:00:42Z",
   "preRollEndsAtUtc": null,
@@ -230,7 +253,7 @@ When a client joins a room group or a transition occurs, the server pushes the f
 }
 ```
 
-`serverNowUtc` lets the client refresh its clock skew on every snapshot. `version` (from the `rowversion` column) supports optimistic concurrency on the server: every operator command includes the version it's acting on; mismatched versions are rejected with a "stale state, please retry" error.
+`serverNowUtc` lets the client refresh its clock skew on every snapshot. `version` (from the `rowversion` column) supports optimistic concurrency on the server: every **state-changing** operator command (`Start`, `Pause`, `Resume`, `Stop`, `Reset`, `SkipNext`, `AdjustTime`, `SetExactRemaining`) includes the version it's acting on; mismatched versions are rejected with a "stale state, please retry" error. `SetMessage` and `ClearMessage` are **not** versioned (last-write-wins) and do **not** bump `Version` — they update `CurrentMessage` and broadcast a `MessageChanged` event, but they don't invalidate concurrent state commands.
 
 ## 7. Realtime architecture (SignalR)
 
@@ -248,21 +271,33 @@ A single `TimerHub`. Authenticated clients (control panel) attach with their bea
 - `EventBrandingChanged(eventId)` — public views refetch theme/logo
 
 **Client → server methods (operator-authenticated):**
-- `Start(roomId, version)`, `Pause`, `Resume`, `Stop`, `Reset`, `SkipNext`
+
+State-changing (versioned — server rejects with `409 Stale State` on version mismatch):
+- `StartAuto(roomId, version)` — server picks the next item per §4.5 and starts it
+- `StartItem(roomId, scheduleItemId, version)` — operator picked an explicit item
+- `Pause(roomId, version)`, `Resume(roomId, version)`, `Stop(roomId, version)`, `Reset(roomId, version)`, `SkipNext(roomId, version)`
 - `AdjustTime(roomId, deltaSec, version)`
 - `SetExactRemaining(roomId, remainingSec, version)`
-- `SetMessage(roomId, message)` / `ClearMessage(roomId)`
 
-All hub method invocations go through an authorization filter that checks the user's role on the parent event and (for `RoomOperator`) the room scope.
+Last-write-wins (unversioned):
+- `SetMessage(roomId, message)`
+- `ClearMessage(roomId)`
 
-Public clients only listen — they cannot invoke any method.
+All hub method invocations go through an authorization filter that checks the user's role on the parent event and (for `RoomOperator`) the room scope (queried from `EventMembershipRoom`).
+
+Public clients only listen — they cannot invoke any method. **Rate limiting** is applied per-IP on access-code lookups (the connection handshake) at 10 requests/second with a 30-request burst allowance, configurable via `Security:PublicRateLimit:*`.
 
 ## 8. Background services
 
-- **`SchedulerService`** — `IHostedService` running a 1Hz loop. Holds a per-tenant in-memory cache of upcoming auto-start triggers, refreshed on schedule edits. Fires the same internal `StartItem` command the hub uses, attributed to a system principal.
-- **`PreRollExpiryService`** — same loop watches rooms in `PreRoll` for `now ≥ PreRollEndsAtUtc` and transitions them to `Running`. Could be folded into `SchedulerService`.
-- **`InvitationEmailService`** — drains an in-memory queue of pending invitation emails (SaaS only). On failure, retries with exponential backoff; persistent failures surface in the audit log.
-- **`MagicLinkEmailService`** — same shape, for sign-in magic links.
+- **`SchedulerService`** — `IHostedService` running a 1Hz loop. Holds a per-tenant in-memory cache of upcoming auto-start triggers, refreshed on schedule edits. Calls the internal `StartItem(roomId, scheduleItemId, Trigger=Scheduler)` command, attributed to a system principal.
+- **`PreRollExpiryService`** — same loop watches rooms in `PreRoll` for `now ≥ PreRollEndsAtUtc` and transitions them to `Running`. Folded into `SchedulerService` in implementation.
+
+**Email is sent synchronously, not queued.** Rationale: an in-memory queue can lose sends on process restart while corresponding rows (magic-link tokens, invitations) sit in the database, locking users out. For v1, the request that creates a magic link or invitation also sends the email inside the same request handler (with a per-call timeout and a circuit breaker around the SMTP transport). On send failure:
+
+- **Magic link sign-in**: the response surfaces an explicit error to the user ("Couldn't send the email — try again or contact support"). The (now-orphaned) `AuthMagicLink` row expires harmlessly.
+- **Invitation**: the response succeeds (the invitation row is created) but flags `EmailSendFailed = true`. The invitation list UI shows a "Resend" button next to it, and a copyable acceptance link is always available so an admin can deliver it out-of-band. This matches the "events without SMTP" workflow already mentioned in §4.1.
+
+If at any point we need durability (e.g., to retry transient SMTP outages), we add an `EmailOutbox` table (already listed in §5 as v1.5) and a drain worker — without changing call sites, since both go through an `IEmailSender` abstraction.
 
 For v1 these run in-process with the API. No external queue (Service Bus, RabbitMQ) is required for the scale we're targeting.
 
@@ -282,7 +317,7 @@ Both modes use ASP.NET Core Identity tables (with `PasswordHash` simply unused i
 Implemented via ASP.NET Core authorization policies + a custom `IAuthorizationRequirement`:
 
 - `EventAccessRequirement(role)` — checks that the calling user has at least the specified role on the parent event. Resolves the event from the route or hub method argument.
-- `RoomAccessRequirement(role)` — same, then additionally checks `ScopedRoomIds` if the user is a `RoomOperator`.
+- `RoomAccessRequirement(role)` — same, then additionally joins through `EventMembershipRoom` if the user is a `RoomOperator` to confirm the specific room is in their scope.
 
 Public surfaces use a separate authentication scheme (`PublicAccessCode`) where the access code is validated against the database and a short-lived claims principal is created for the SignalR connection.
 
@@ -304,10 +339,11 @@ Public surfaces use a separate authentication scheme (`PublicAccessCode`) where 
 
 ## 11. Public access codes
 
-- 6 characters from a 32-char alphabet (uppercase A-Z plus digits 2-9, omitting `0`, `1`, `I`, `O` to avoid visual confusion).
-- Generated with a CSPRNG; **uniqueness enforced globally within the deployment** (across all tenants), with a unique index on `Room.AccessCode` and `Event.LobbyAccessCode`; collision retry on insert. This avoids needing per-tenant subdomain routing in v1: looking up a code reveals its tenant unambiguously.
-- A code length of 6 from a 32-char alphabet gives ~10⁹ possibilities; collision probability stays negligible into the millions of rooms. If we ever need a wider keyspace, we can extend to 7 characters per new code without invalidating existing ones.
-- Regenerating a code immediately invalidates the previous code; the audit log records the regeneration, and any active SignalR connections using the old code are dropped (clients then show a "URL no longer valid" screen).
+- **8 characters from a 32-char alphabet** (uppercase A-Z plus digits 2-9, omitting `0`, `1`, `I`, `O` to avoid visual confusion). **Displayed and printed as `XXXX-XXXX`** for readability; the dash is purely cosmetic — stored in the database as 8 raw characters, and URL parsing accepts both forms (the dash is stripped before lookup).
+- Generated with a CSPRNG. **Uniqueness enforced globally across the deployment** (no per-tenant scoping), with a unique index on `Room.AccessCode` and `Event.LobbyAccessCode`. Collision is detected at insert and retried automatically. This means the URL alone resolves to a tenant — no subdomain required for v1.
+- **Keyspace:** 32⁸ ≈ 1.1 × 10¹². Even with a million rooms in the deployment, birthday-collision probability stays well under 10⁻⁶, and brute-force discovery — combined with the rate limit below — is impractical.
+- **Rate limiting on access-code lookup:** 10 req/sec per IP with a 30-request burst (configurable via `Security:PublicRateLimit:*`), enforced as ASP.NET Core middleware on `/r/*`, `/e/*`, and the hub negotiate endpoint. Repeated invalid codes from a single IP escalate to a longer cooldown.
+- **Code rotation:** regenerating a code immediately invalidates the previous code; the audit log records the regeneration, and any active SignalR connections using the old code are dropped (clients show a "URL no longer valid" screen). Rotation is recommended between events.
 - QR codes for each access URL are generated on demand via `QRCoder` (server-side PNG) for printing.
 
 ## 12. Container, deployment, and configuration
@@ -362,8 +398,8 @@ EF Core migrations are applied automatically on startup if `Database:AutoMigrate
 - **Concurrent operator edits to schedule** — schedule item updates use the same `rowversion` / `version` mechanism; the loser sees a conflict dialog and can re-apply.
 - **SchedulerService crash** — supervisor restart by ASP.NET Core hosting; on restart, the loop re-reads upcoming triggers from the database. Idempotent: triggers already fired (rooms in non-Idle state) are skipped.
 - **Database transient errors** — EF Core retry-on-failure policy enabled (max 5 retries, exponential backoff).
-- **Email send failures** — logged and retried with backoff; persistent failures surface a "show invitation link manually" path in the UI so events aren't blocked.
-- **Public access code typo / revocation** — server returns a friendly "URL not valid" screen with a contact-the-organizer message. Public surfaces never expose tenant or event identifiers in errors.
+- **Email send failures** — synchronous send means failures surface immediately to the caller (see §8). Magic-link sign-in shows a retry prompt; invitation creation flags `EmailSendFailed` and exposes a copyable link in the admin UI so events aren't blocked.
+- **Public access code typo / revocation / brute-force** — server returns a friendly "URL not valid" screen. The rate limiter (§11) caps invalid-lookup attempts; sustained abuse from a single IP triggers a longer cooldown logged via the audit log. Public surfaces never expose tenant or event identifiers in errors.
 - **Time skew on confidence monitors** — clock skew measured every snapshot. If skew jumps more than 2 seconds between snapshots, the client logs a warning and refreshes its baseline.
 - **Server clock change (NTP step)** — the server serializes timestamps in UTC and uses monotonic clocks for short-interval calculations where available; explicit unit tests cover daylight-saving transitions in event time zones.
 
@@ -384,14 +420,20 @@ EF Core migrations are applied automatically on startup if `Database:AutoMigrate
 - Single Docker image, optional compose for self-host
 - Multi-tenant with `TenantId` row-scoping
 - Server-authoritative state, client-side ticking with measured clock skew
-- Public access via 6-char codes (regeneratable)
+- Public access via **8-char codes displayed as `XXXX-XXXX`**, globally unique, with rate-limited lookup
 - Per-event branding: theme tokens with defaults + logo upload
-- Configurable threshold list per schedule item, inheriting from event default
+- Configurable threshold list per schedule item, inheriting from event default; selection uses the **smallest** matching `secondsRemaining`
 - Two auth modes (`MagicLink` cloud / `Password` self-host)
+- **Synchronous email send** with `IEmailSender` abstraction; persistent `EmailOutbox` deferred to v1.5
+- **`ScheduleItemRun`** history table for per-item run tracking
+- **`StartItem(roomId, scheduleItemId, trigger)`** as the single internal start path; only operator `Start` auto-selects
+- **`EventMembershipRoom`** join table for `RoomOperator` scoping (no CSV)
+- **`SetMessage`** is unversioned, last-write-wins; does not bump `RoomTimerState.Version`
 
 ### Deferred (post-v1)
 
 - Horizontal scaling with Redis backplane and leader-elected scheduler
+- Persistent `EmailOutbox` with retry worker (replaces synchronous send if outages become a problem)
 - Native attendee-facing schedule pages
 - Tenant subdomain routing in SaaS
 - Event templates / cloning
@@ -402,19 +444,22 @@ EF Core migrations are applied automatically on startup if `Database:AutoMigrate
 ### Open (decide before plan)
 
 - Naming for the product (currently working title "Event Stage Timer")
-- Whether `RoomOperator` scoping uses CSV `ScopedRoomIds` or a join table — preference: join table (`EventMembershipRoom`) for query simplicity, but CSV is acceptable for v1
 - Whether logo upload should also enforce a colour-contrast check against the chosen theme tokens — deferred unless events report problems
 
 ## 16. Implementation phasing (provisional — to be refined in plan)
 
-1. **Foundation** — solution scaffolding, EF Core schema, migrations, identity, Tenant + Event + Room CRUD, RBAC, audit log
-2. **Timer core** — `RoomTimerState`, hub, state machine, scheduler, integration tests
-3. **Control panel** — React shell, login, event dashboard, room control, schedule editor
-4. **Speaker view** — Layout A, public access codes, theme tokens
-5. **Door view + Lobby view** — public surfaces
-6. **Branding** — theme editor + logo upload, file storage abstraction
-7. **Live messages + templates**
-8. **Polishing** — audit log UI, invitations UI, QR codes, settings
-9. **Container packaging + Azure deployment**
+The phase order is deliberately **risk-first**: the live timing path (state machine, hub, clock skew, speaker rendering) is validated end-to-end against seed data before any operator-facing CRUD UI. Drag-and-drop schedule editing, branding, QR codes, and invitations are undifferentiated work that doesn't need to gate the high-risk loop.
+
+1. **Foundation** — solution scaffolding, EF Core schema (including `ScheduleItemRun`, `EventMembershipRoom`), migrations, ASP.NET Core Identity, `IClock` abstraction, `IEmailSender` abstraction, seed-data utilities for tests and dev
+2. **Timer core + hub** — `RoomTimerState`, the state machine, `StartItem` internal command, `TimerHub` with all state-changing methods, `SchedulerService`, snapshot payload + clock-skew handshake, integration tests for transitions and stale-version conflicts
+3. **Speaker view (vertical slice)** — Layout A wired to the hub via `@microsoft/signalr`, public access codes (generation + lookup + rate limiting), theme defaults (no overrides yet), threshold selection. End-to-end Playwright test runs a 30-second simulated session against seed data and asserts the speaker view shows the correct colors, overrun, etc.
+4. **Minimal control panel** — React shell, sign-in (both auth modes), event list, single-room control page (live transport buttons, time adjustments, schedule shown read-only). No drag-drop yet. This is the smallest UI that lets a real operator drive the live loop.
+5. **Schedule editor** — full CRUD with drag-to-reorder, threshold configuration UI, bulk operations, default-thresholds editor at event level
+6. **Door view + Lobby view** — public surfaces
+7. **Branding** — theme editor + logo upload, `IFileStorage` abstraction with both implementations, public branding API
+8. **Live messages + templates** — operator UI, `MessageChanged` event, template CRUD
+9. **Members + invitations** — invitation flow, `EventMembershipRoom` UI for room scoping, audit log UI
+10. **Polishing** — QR codes, settings pages, member management, error states
+11. **Container packaging + Azure deployment** — multi-stage Dockerfile, docker-compose, Azure Container Apps + Azure SQL config
 
 The implementation plan (next step) will turn these phases into a sequenced set of executable tasks with dependencies and review checkpoints.
