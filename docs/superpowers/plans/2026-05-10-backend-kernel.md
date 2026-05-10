@@ -3380,3 +3380,805 @@ git add . && git commit -m "feat: emit tid claim from primary TenantMembership a
 ```
 
 ---
+
+## Task 29: `EventAccessRequirement` + handler
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/Policies/EventAccessRequirement.cs`
+- Create: `src/EventStageTimer.Api/Auth/Policies/EventAccessHandler.cs`
+- Modify: `src/EventStageTimer.Api/Program.cs` (register policies)
+
+Spec anchors: §9.2 authorization.
+
+- [ ] **Step 1: Define the requirement**
+
+Create `src/EventStageTimer.Api/Auth/Policies/EventAccessRequirement.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using Microsoft.AspNetCore.Authorization;
+
+namespace EventStageTimer.Api.Auth.Policies;
+
+public sealed class EventAccessRequirement(EventRole minimumRole) : IAuthorizationRequirement
+{
+    public EventRole MinimumRole { get; } = minimumRole;
+}
+```
+
+- [ ] **Step 2: Implement the handler**
+
+Create `src/EventStageTimer.Api/Auth/Policies/EventAccessHandler.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Auth.Policies;
+
+public sealed class EventAccessHandler(AppDbContext db, IHttpContextAccessor http) : AuthorizationHandler<EventAccessRequirement>
+{
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext ctx, EventAccessRequirement requirement)
+    {
+        var userIdClaim = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdClaim, out var userId)) return;
+
+        var eventId = ResolveEventId(http.HttpContext);
+        if (eventId is null) return;
+
+        var membership = await db.EventMemberships
+            .IgnoreQueryFilters()
+            .Where(em => em.EventId == eventId && em.UserId == userId)
+            .Select(em => (EventRole?)em.Role)
+            .FirstOrDefaultAsync();
+
+        if (membership is { } role && role <= requirement.MinimumRole)
+            ctx.Succeed(requirement);
+    }
+
+    private static Guid? ResolveEventId(HttpContext? ctx)
+    {
+        if (ctx is null) return null;
+        var route = ctx.GetRouteData();
+        if (route.Values.TryGetValue("eventId", out var v) && Guid.TryParse(v?.ToString(), out var g)) return g;
+        if (ctx.Request.Query.TryGetValue("eventId", out var qv) && Guid.TryParse(qv, out var qg)) return qg;
+        return null;
+    }
+}
+```
+
+> `EventRole` is ordered numerically: `EventAdmin=1`, `RoomOperator=2`, `Viewer=3`. The check `role <= MinimumRole` means a user satisfies a `MinimumRole=Viewer` requirement with any of the three roles, but a `MinimumRole=EventAdmin` requirement only with `EventAdmin`.
+
+- [ ] **Step 3: Register in DI and define named policies**
+
+In `Program.cs`, after `AddAppIdentity`:
+
+```csharp
+builder.Services.AddScoped<IAuthorizationHandler, EventStageTimer.Api.Auth.Policies.EventAccessHandler>();
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("EventAdmin", p => p.AddRequirements(new EventStageTimer.Api.Auth.Policies.EventAccessRequirement(EventStageTimer.Domain.Entities.EventRole.EventAdmin)))
+    .AddPolicy("EventViewer", p => p.AddRequirements(new EventStageTimer.Api.Auth.Policies.EventAccessRequirement(EventStageTimer.Domain.Entities.EventRole.Viewer)));
+```
+
+- [ ] **Step 4: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: EventAccessRequirement + handler + EventAdmin/EventViewer policies"
+```
+
+---
+
+## Task 30: `RoomAccessRequirement` + handler
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/Policies/RoomAccessRequirement.cs`
+- Create: `src/EventStageTimer.Api/Auth/Policies/RoomAccessHandler.cs`
+- Modify: `src/EventStageTimer.Api/Program.cs`
+
+Spec anchor: §9.2.
+
+- [ ] **Step 1: Define the requirement**
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using Microsoft.AspNetCore.Authorization;
+
+namespace EventStageTimer.Api.Auth.Policies;
+
+public sealed class RoomAccessRequirement(EventRole minimumRole) : IAuthorizationRequirement
+{
+    public EventRole MinimumRole { get; } = minimumRole;
+}
+```
+
+- [ ] **Step 2: Implement the handler — joins through `EventMembershipRoom` for `RoomOperator`**
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Auth.Policies;
+
+public sealed class RoomAccessHandler(AppDbContext db, IHttpContextAccessor http) : AuthorizationHandler<RoomAccessRequirement>
+{
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext ctx, RoomAccessRequirement requirement)
+    {
+        var userIdClaim = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdClaim, out var userId)) return;
+
+        var roomId = ResolveRoomId(http.HttpContext);
+        if (roomId is null) return;
+
+        var room = await db.Rooms
+            .IgnoreQueryFilters()
+            .Where(r => r.Id == roomId)
+            .Select(r => new { r.Id, r.EventId, r.TenantId })
+            .FirstOrDefaultAsync();
+        if (room is null) return;
+
+        var membership = await db.EventMemberships
+            .IgnoreQueryFilters()
+            .Where(em => em.EventId == room.EventId && em.UserId == userId)
+            .Select(em => new { em.Id, em.Role })
+            .FirstOrDefaultAsync();
+        if (membership is null) return;
+
+        if (membership.Role > requirement.MinimumRole) return; // not high enough
+
+        if (membership.Role == EventRole.RoomOperator)
+        {
+            // Must be in scoped rooms
+            var inScope = await db.EventMembershipRooms
+                .IgnoreQueryFilters()
+                .AnyAsync(emr => emr.EventMembershipId == membership.Id && emr.RoomId == room.Id);
+            if (!inScope) return;
+        }
+
+        ctx.Succeed(requirement);
+    }
+
+    private static Guid? ResolveRoomId(HttpContext? ctx)
+    {
+        if (ctx is null) return null;
+        var route = ctx.GetRouteData();
+        if (route.Values.TryGetValue("roomId", out var v) && Guid.TryParse(v?.ToString(), out var g)) return g;
+        if (ctx.Request.Query.TryGetValue("roomId", out var qv) && Guid.TryParse(qv, out var qg)) return qg;
+        return null;
+    }
+}
+```
+
+- [ ] **Step 3: Register policy**
+
+In `Program.cs`:
+
+```csharp
+builder.Services.AddScoped<IAuthorizationHandler, EventStageTimer.Api.Auth.Policies.RoomAccessHandler>();
+// Extend the AddAuthorizationBuilder chain:
+//   .AddPolicy("RoomOperator", p => p.AddRequirements(new EventStageTimer.Api.Auth.Policies.RoomAccessRequirement(EventStageTimer.Domain.Entities.EventRole.RoomOperator)))
+```
+
+- [ ] **Step 4: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: RoomAccessRequirement + handler with EventMembershipRoom scope check"
+```
+
+---
+
+## Task 31: Public access-code authentication scheme
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/Public/PublicAccessCodeAuthOptions.cs`
+- Create: `src/EventStageTimer.Api/Auth/Public/PublicAccessCodeAuthHandler.cs`
+- Create: `src/EventStageTimer.Api/Auth/Public/PublicAccessContext.cs`
+- Modify: `src/EventStageTimer.Api/Auth/Identity/IdentitySetup.cs`
+
+Spec anchors: §7 hub auth, §9.2 public scheme.
+
+- [ ] **Step 1: Define the auth scheme options**
+
+```csharp
+using Microsoft.AspNetCore.Authentication;
+
+namespace EventStageTimer.Api.Auth.Public;
+
+public sealed class PublicAccessCodeAuthOptions : AuthenticationSchemeOptions { }
+```
+
+- [ ] **Step 2: Add a per-request public access context (room + tenant resolved from code)**
+
+```csharp
+namespace EventStageTimer.Api.Auth.Public;
+
+public sealed class PublicAccessContext
+{
+    public Guid? TenantId { get; set; }
+    public Guid? RoomId { get; set; }
+    public Guid? EventId { get; set; }
+    public string? AccessCode { get; set; }
+    public bool IsLobbyCode { get; set; }
+}
+```
+
+- [ ] **Step 3: Implement the handler**
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Tenancy;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+
+namespace EventStageTimer.Api.Auth.Public;
+
+public sealed class PublicAccessCodeAuthHandler(
+    IOptionsMonitor<PublicAccessCodeAuthOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder,
+    AppDbContext db,
+    PublicAccessContext context,
+    ITenantContext tenantContext)
+    : AuthenticationHandler<PublicAccessCodeAuthOptions>(options, logger, encoder)
+{
+    public const string SchemeName = "PublicAccessCode";
+
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        // Code lives in the path: /r/{code}/... or /e/{code}/lobby
+        var path = Request.Path.Value ?? "";
+        string? raw = null;
+        bool isLobby = false;
+        if (path.StartsWith("/r/", StringComparison.Ordinal)) { raw = ExtractSegment(path, 3); }
+        else if (path.StartsWith("/e/", StringComparison.Ordinal)) { raw = ExtractSegment(path, 3); isLobby = true; }
+        // Hub negotiate: code is in querystring "?code="
+        if (raw is null && Request.Query.TryGetValue("code", out var q)) raw = q.ToString();
+
+        if (raw is null || !AccessCode.TryParse(raw, out var code))
+            return AuthenticateResult.NoResult();
+
+        if (isLobby)
+        {
+            var ev = await db.Events.IgnoreQueryFilters()
+                .Where(e => e.LobbyAccessCode == code.Value)
+                .Select(e => new { e.Id, e.TenantId })
+                .FirstOrDefaultAsync();
+            if (ev is null) return AuthenticateResult.Fail("Invalid code");
+            context.AccessCode = code.Value;
+            context.EventId = ev.Id;
+            context.TenantId = ev.TenantId;
+            context.IsLobbyCode = true;
+        }
+        else
+        {
+            var room = await db.Rooms.IgnoreQueryFilters()
+                .Where(r => r.AccessCode == code.Value)
+                .Select(r => new { r.Id, r.EventId, r.TenantId })
+                .FirstOrDefaultAsync();
+            if (room is null) return AuthenticateResult.Fail("Invalid code");
+            context.AccessCode = code.Value;
+            context.RoomId = room.Id;
+            context.EventId = room.EventId;
+            context.TenantId = room.TenantId;
+        }
+
+        if (context.TenantId is { } tid) tenantContext.Set(tid);
+
+        var claims = new List<Claim>
+        {
+            new("acl", code.Value),
+            new("scope", isLobby ? "lobby" : "room"),
+        };
+        if (context.RoomId is { } rid) claims.Add(new Claim("rid", rid.ToString()));
+        if (context.EventId is { } eid) claims.Add(new Claim("eid", eid.ToString()));
+        if (context.TenantId is { } tid2) claims.Add(new Claim("tid", tid2.ToString()));
+
+        var identity = new ClaimsIdentity(claims, SchemeName);
+        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
+    }
+
+    private static string? ExtractSegment(string path, int startIndex)
+    {
+        var rest = path[startIndex..];
+        var slash = rest.IndexOf('/');
+        return slash < 0 ? rest : rest[..slash];
+    }
+}
+```
+
+- [ ] **Step 4: Register the scheme**
+
+In `IdentitySetup.AddAppIdentity`, change `services.AddAuthentication(SchemeName).AddCookie(...)` to add the public scheme:
+
+```csharp
+services.AddScoped<EventStageTimer.Api.Auth.Public.PublicAccessContext>();
+
+services.AddAuthentication(SchemeName)
+    .AddCookie(SchemeName, opts => { /* unchanged */ })
+    .AddScheme<EventStageTimer.Api.Auth.Public.PublicAccessCodeAuthOptions, EventStageTimer.Api.Auth.Public.PublicAccessCodeAuthHandler>(
+        EventStageTimer.Api.Auth.Public.PublicAccessCodeAuthHandler.SchemeName, _ => { });
+```
+
+- [ ] **Step 5: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: PublicAccessCode auth scheme with PublicAccessContext"
+```
+
+---
+
+## Task 32: `PublicRateLimitMiddleware`
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Middleware/PublicRateLimitMiddleware.cs`
+- Modify: `src/EventStageTimer.Api/Program.cs`
+- Modify: `src/EventStageTimer.Api/appsettings.json`
+
+Spec anchor: §11 rate limiting (10 req/sec per IP, 30-burst).
+
+- [ ] **Step 1: Implement the middleware using ASP.NET Core's `RateLimiting` package shape**
+
+```csharp
+using System.Collections.Concurrent;
+using System.Net;
+
+namespace EventStageTimer.Api.Middleware;
+
+public sealed class PublicRateLimitOptions
+{
+    public int RequestsPerSecond { get; set; } = 10;
+    public int BurstSize { get; set; } = 30;
+    public int CooldownSeconds { get; set; } = 60;
+}
+
+public sealed class PublicRateLimitMiddleware(RequestDelegate next, Microsoft.Extensions.Options.IOptions<PublicRateLimitOptions> opts, Microsoft.Extensions.Logging.ILogger<PublicRateLimitMiddleware> log)
+{
+    private static readonly ConcurrentDictionary<string, Bucket> Buckets = new();
+    private readonly PublicRateLimitOptions _opts = opts.Value;
+
+    public async Task InvokeAsync(HttpContext ctx)
+    {
+        if (!IsPublicPath(ctx.Request.Path)) { await next(ctx); return; }
+
+        var ip = (ctx.Connection.RemoteIpAddress ?? IPAddress.Loopback).ToString();
+        var bucket = Buckets.GetOrAdd(ip, _ => new Bucket(_opts.BurstSize, _opts.RequestsPerSecond));
+
+        if (!bucket.TryConsume(1, DateTime.UtcNow))
+        {
+            log.LogInformation("Rate limit hit from {Ip} on {Path}", ip, ctx.Request.Path);
+            ctx.Response.StatusCode = 429;
+            ctx.Response.Headers["Retry-After"] = _opts.CooldownSeconds.ToString();
+            return;
+        }
+        await next(ctx);
+    }
+
+    private static bool IsPublicPath(PathString path)
+    {
+        var s = path.Value ?? "";
+        return s.StartsWith("/r/", StringComparison.Ordinal)
+            || s.StartsWith("/e/", StringComparison.Ordinal)
+            || s.StartsWith("/hub/timer/negotiate", StringComparison.Ordinal);
+    }
+
+    private sealed class Bucket(int capacity, double refillPerSec)
+    {
+        private double _tokens = capacity;
+        private DateTime _last = DateTime.UtcNow;
+        private readonly object _lock = new();
+
+        public bool TryConsume(int amount, DateTime nowUtc)
+        {
+            lock (_lock)
+            {
+                var elapsed = (nowUtc - _last).TotalSeconds;
+                _tokens = Math.Min(capacity, _tokens + elapsed * refillPerSec);
+                _last = nowUtc;
+                if (_tokens < amount) return false;
+                _tokens -= amount;
+                return true;
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Register and configure**
+
+In `Program.cs`:
+
+```csharp
+builder.Services.Configure<EventStageTimer.Api.Middleware.PublicRateLimitOptions>(builder.Configuration.GetSection("Security:PublicRateLimit"));
+```
+
+In the request pipeline, before `UseAuthentication`:
+
+```csharp
+app.UseMiddleware<EventStageTimer.Api.Middleware.PublicRateLimitMiddleware>();
+```
+
+`appsettings.json` — add:
+
+```json
+"Security": {
+  "PublicRateLimit": {
+    "RequestsPerSecond": 10,
+    "BurstSize": 30,
+    "CooldownSeconds": 60
+  }
+}
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: PublicRateLimitMiddleware (token bucket per IP) for /r, /e, hub negotiate"
+```
+
+---
+
+## Task 33: `EventsController` — CRUD on events
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Controllers/EventsController.cs`
+
+- [ ] **Step 1: Implement the controller (require `EventAdmin` for mutations, authenticated for reads)**
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Auth;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Controllers;
+
+[ApiController]
+[Authorize] // cookie-authenticated — TenantContext already set by middleware
+[Route("api/events")]
+public sealed class EventsController(AppDbContext db, IClock clock, IAccessCodeGenerator codes) : ControllerBase
+{
+    public sealed record EventDto(Guid Id, string Name, string TimeZone, DateTime StartsAtUtc, DateTime EndsAtUtc, string LobbyAccessCode);
+    public sealed record CreateBody(string Name, string TimeZone, DateTime StartsAtUtc, DateTime EndsAtUtc);
+    public sealed record UpdateBody(string Name, string TimeZone, DateTime StartsAtUtc, DateTime EndsAtUtc);
+
+    [HttpGet]
+    public async Task<IReadOnlyList<EventDto>> List(CancellationToken ct)
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        return await db.Events
+            .Where(e => e.Memberships.Any(m => m.UserId == userId))
+            .Select(e => new EventDto(e.Id, e.Name, e.TimeZone, e.StartsAtUtc, e.EndsAtUtc, e.LobbyAccessCode))
+            .ToListAsync(ct);
+    }
+
+    [HttpGet("{eventId:guid}")]
+    [Authorize(Policy = "EventViewer")]
+    public async Task<ActionResult<EventDto>> Get(Guid eventId, CancellationToken ct)
+    {
+        var ev = await db.Events
+            .Where(e => e.Id == eventId)
+            .Select(e => new EventDto(e.Id, e.Name, e.TimeZone, e.StartsAtUtc, e.EndsAtUtc, e.LobbyAccessCode))
+            .FirstOrDefaultAsync(ct);
+        return ev is null ? NotFound() : Ok(ev);
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<EventDto>> Create([FromBody] CreateBody body, CancellationToken ct)
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var tenantId = Guid.Parse(User.FindFirstValue("tid")!);
+        var lobbyCode = await codes.GenerateUniqueAsync(ct);
+
+        var ev = new Event
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = body.Name,
+            TimeZone = body.TimeZone,
+            StartsAtUtc = body.StartsAtUtc,
+            EndsAtUtc = body.EndsAtUtc,
+            LobbyAccessCode = lobbyCode.Value,
+            CreatedAtUtc = clock.UtcNow,
+        };
+        db.Events.Add(ev);
+
+        // The creator becomes EventAdmin
+        db.EventMemberships.Add(new EventMembership
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            EventId = ev.Id,
+            UserId = userId,
+            Role = EventRole.EventAdmin,
+            CreatedAtUtc = clock.UtcNow,
+        });
+
+        await db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(Get), new { eventId = ev.Id }, new EventDto(ev.Id, ev.Name, ev.TimeZone, ev.StartsAtUtc, ev.EndsAtUtc, ev.LobbyAccessCode));
+    }
+
+    [HttpPut("{eventId:guid}")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Update(Guid eventId, [FromBody] UpdateBody body, CancellationToken ct)
+    {
+        var ev = await db.Events.FirstOrDefaultAsync(e => e.Id == eventId, ct);
+        if (ev is null) return NotFound();
+        ev.Name = body.Name;
+        ev.TimeZone = body.TimeZone;
+        ev.StartsAtUtc = body.StartsAtUtc;
+        ev.EndsAtUtc = body.EndsAtUtc;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpDelete("{eventId:guid}")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Delete(Guid eventId, CancellationToken ct)
+    {
+        var ev = await db.Events.FirstOrDefaultAsync(e => e.Id == eventId, ct);
+        if (ev is null) return NotFound();
+        ev.DeletedAtUtc = clock.UtcNow; // soft delete
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+}
+```
+
+- [ ] **Step 2: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: EventsController — CRUD with EventAdmin policy on mutations"
+```
+
+---
+
+## Task 34: `RoomsController` — CRUD + access-code regeneration
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Controllers/RoomsController.cs`
+
+- [ ] **Step 1: Implement the controller**
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Auth;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Api.Controllers;
+
+[ApiController]
+[Authorize]
+[Route("api/events/{eventId:guid}/rooms")]
+public sealed class RoomsController(AppDbContext db, IClock clock, IAccessCodeGenerator codes) : ControllerBase
+{
+    public sealed record RoomDto(Guid Id, Guid EventId, string Name, string AccessCode, int DefaultPreRollSec);
+    public sealed record CreateBody(string Name, int DefaultPreRollSec = 30);
+    public sealed record UpdateBody(string Name, int DefaultPreRollSec);
+
+    [HttpGet]
+    [Authorize(Policy = "EventViewer")]
+    public async Task<IReadOnlyList<RoomDto>> List(Guid eventId, CancellationToken ct) =>
+        await db.Rooms
+            .Where(r => r.EventId == eventId)
+            .Select(r => new RoomDto(r.Id, r.EventId, r.Name, r.AccessCode, r.DefaultPreRollSec))
+            .ToListAsync(ct);
+
+    [HttpPost]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<ActionResult<RoomDto>> Create(Guid eventId, [FromBody] CreateBody body, CancellationToken ct)
+    {
+        var ev = await db.Events.FirstOrDefaultAsync(e => e.Id == eventId, ct);
+        if (ev is null) return NotFound();
+        var code = await codes.GenerateUniqueAsync(ct);
+        var room = new Room
+        {
+            Id = Guid.NewGuid(),
+            TenantId = ev.TenantId,
+            EventId = eventId,
+            Name = body.Name,
+            AccessCode = code.Value,
+            DefaultPreRollSec = body.DefaultPreRollSec,
+            CreatedAtUtc = clock.UtcNow,
+        };
+        db.Rooms.Add(room);
+        // Initialize timer state
+        db.RoomTimerStates.Add(new RoomTimerState
+        {
+            RoomId = room.Id,
+            TenantId = ev.TenantId,
+            Phase = TimerPhase.Idle,
+        });
+        await db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(List), new { eventId }, new RoomDto(room.Id, room.EventId, room.Name, room.AccessCode, room.DefaultPreRollSec));
+    }
+
+    [HttpPut("{roomId:guid}")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Update(Guid eventId, Guid roomId, [FromBody] UpdateBody body, CancellationToken ct)
+    {
+        var room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId && r.EventId == eventId, ct);
+        if (room is null) return NotFound();
+        room.Name = body.Name;
+        room.DefaultPreRollSec = body.DefaultPreRollSec;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpPost("{roomId:guid}/regenerate-access-code")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<ActionResult<RoomDto>> RegenerateAccessCode(Guid eventId, Guid roomId, CancellationToken ct)
+    {
+        var room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId && r.EventId == eventId, ct);
+        if (room is null) return NotFound();
+        var newCode = await codes.GenerateUniqueAsync(ct);
+        room.AccessCode = newCode.Value;
+        db.AuditLog.Add(new AuditLogEntry
+        {
+            Id = Guid.NewGuid(), TenantId = room.TenantId,
+            EventId = eventId, RoomId = roomId,
+            Action = "RegenerateAccessCode", DetailsJson = "{}", AtUtc = clock.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
+        return Ok(new RoomDto(room.Id, room.EventId, room.Name, room.AccessCode, room.DefaultPreRollSec));
+    }
+
+    [HttpDelete("{roomId:guid}")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Delete(Guid eventId, Guid roomId, CancellationToken ct)
+    {
+        var room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId && r.EventId == eventId, ct);
+        if (room is null) return NotFound();
+        room.DeletedAtUtc = clock.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+}
+```
+
+- [ ] **Step 2: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: RoomsController — CRUD + AccessCode regeneration with audit"
+```
+
+---
+
+## Task 35: `ScheduleItemsController` — CRUD + reorder
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Controllers/ScheduleItemsController.cs`
+
+- [ ] **Step 1: Implement the controller**
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Api.Controllers;
+
+[ApiController]
+[Authorize(Policy = "EventViewer")]
+[Route("api/rooms/{roomId:guid}/schedule")]
+public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : ControllerBase
+{
+    public sealed record ScheduleItemDto(Guid Id, int Position, string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson);
+    public sealed record CreateBody(string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson);
+    public sealed record UpdateBody(string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson);
+    public sealed record ReorderBody(IReadOnlyList<Guid> ItemIdsInOrder);
+
+    [HttpGet]
+    public async Task<IReadOnlyList<ScheduleItemDto>> List(Guid roomId, CancellationToken ct) =>
+        await db.ScheduleItems
+            .Where(s => s.RoomId == roomId)
+            .OrderBy(s => s.Position)
+            .Select(s => new ScheduleItemDto(s.Id, s.Position, s.Title, s.SpeakerName, s.ScheduledStartUtc, s.DurationSec, s.PreRollSec, s.AutoStart, s.ThresholdsJson))
+            .ToListAsync(ct);
+
+    [HttpPost]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<ActionResult<ScheduleItemDto>> Create(Guid roomId, [FromBody] CreateBody body, CancellationToken ct)
+    {
+        var room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId, ct);
+        if (room is null) return NotFound();
+        var maxPos = await db.ScheduleItems.Where(s => s.RoomId == roomId).Select(s => (int?)s.Position).MaxAsync(ct) ?? 0;
+        var item = new ScheduleItem
+        {
+            Id = Guid.NewGuid(),
+            TenantId = room.TenantId,
+            RoomId = roomId,
+            Position = maxPos + 1,
+            Title = body.Title,
+            SpeakerName = body.SpeakerName,
+            ScheduledStartUtc = body.ScheduledStartUtc,
+            DurationSec = body.DurationSec,
+            PreRollSec = body.PreRollSec,
+            AutoStart = body.AutoStart,
+            ThresholdsJson = body.ThresholdsJson,
+            CreatedAtUtc = clock.UtcNow,
+        };
+        db.ScheduleItems.Add(item);
+        await db.SaveChangesAsync(ct);
+        return Ok(new ScheduleItemDto(item.Id, item.Position, item.Title, item.SpeakerName, item.ScheduledStartUtc, item.DurationSec, item.PreRollSec, item.AutoStart, item.ThresholdsJson));
+    }
+
+    [HttpPut("{itemId:guid}")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Update(Guid roomId, Guid itemId, [FromBody] UpdateBody body, CancellationToken ct)
+    {
+        var item = await db.ScheduleItems.FirstOrDefaultAsync(s => s.Id == itemId && s.RoomId == roomId, ct);
+        if (item is null) return NotFound();
+        item.Title = body.Title;
+        item.SpeakerName = body.SpeakerName;
+        item.ScheduledStartUtc = body.ScheduledStartUtc;
+        item.DurationSec = body.DurationSec;
+        item.PreRollSec = body.PreRollSec;
+        item.AutoStart = body.AutoStart;
+        item.ThresholdsJson = body.ThresholdsJson;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpPost("reorder")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Reorder(Guid roomId, [FromBody] ReorderBody body, CancellationToken ct)
+    {
+        var items = await db.ScheduleItems.Where(s => s.RoomId == roomId).ToListAsync(ct);
+        var byId = items.ToDictionary(i => i.Id);
+        for (var i = 0; i < body.ItemIdsInOrder.Count; i++)
+            if (byId.TryGetValue(body.ItemIdsInOrder[i], out var item))
+                item.Position = i + 1;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpDelete("{itemId:guid}")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<IActionResult> Delete(Guid roomId, Guid itemId, CancellationToken ct)
+    {
+        var item = await db.ScheduleItems.FirstOrDefaultAsync(s => s.Id == itemId && s.RoomId == roomId, ct);
+        if (item is null) return NotFound();
+        item.DeletedAtUtc = clock.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+}
+```
+
+- [ ] **Step 2: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: ScheduleItemsController — CRUD with positional reorder"
+```
+
+---
