@@ -62,7 +62,7 @@ export default function BrandingPage() {
           </div>
         )}
         <div className="flex gap-2 items-center">
-          <input type="file" accept="image/png,image/svg+xml,image/jpeg"
+          <input type="file" accept="image/png,image/jpeg"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); }} />
           {get.data!.logoUrl && (
             <button onClick={() => removeLogo.mutate()} className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">Remove</button>

@@ -20,7 +20,11 @@ public static class SeedData
         var codes = scope.ServiceProvider.GetRequiredService<IAccessCodeGenerator>();
         var now = clock.UtcNow;
 
-        var tenant = new Tenant { Id = Guid.NewGuid(), Name = "Demo", Slug = "demo", Mode = TenantMode.SelfHost, CreatedAtUtc = now };
+        // Tenant slug is unique within the deployment; suffix with a short random
+        // token so re-running --seed against the same DB doesn't crash on the
+        // unique index.
+        var slug = $"demo-{Guid.NewGuid():N}".Substring(0, 13);
+        var tenant = new Tenant { Id = Guid.NewGuid(), Name = "Demo", Slug = slug, Mode = TenantMode.SelfHost, CreatedAtUtc = now };
         db.Tenants.Add(tenant);
 
         var owner = new User { Id = Guid.NewGuid(), Email = ownerEmail, UserName = ownerEmail, DisplayName = "Owner", CreatedAtUtc = now };

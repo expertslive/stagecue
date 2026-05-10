@@ -109,7 +109,13 @@ public static class TimerStateMachine
             return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
         if (state.StartedAtUtc is null) return Result<Unit, TimerCommandError>.Fail(TimerCommandError.InvalidPhase);
 
-        var elapsed = (nowUtc - state.StartedAtUtc.Value).TotalSeconds - state.PausedAccumSec;
+        // While Paused, the open pause window is NOT yet folded into PausedAccumSec
+        // (that happens on Resume). Use PauseStartedAtUtc as the "frozen now" so the
+        // elapsed calculation matches what the speaker view is displaying.
+        var referenceNow = state.Phase == TimerPhase.Paused && state.PauseStartedAtUtc is { } p
+            ? p
+            : nowUtc;
+        var elapsed = (referenceNow - state.StartedAtUtc.Value).TotalSeconds - state.PausedAccumSec;
         var currentEffectiveTotal = currentItem.DurationSec + state.AdjustmentSec;
         var currentRemaining = currentEffectiveTotal - elapsed;
         var delta = remainingSec - (int)currentRemaining;

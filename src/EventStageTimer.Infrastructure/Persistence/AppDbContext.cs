@@ -166,15 +166,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
 
         // Multi-tenant filters — referencing CurrentTenantId (context-instance member)
         // so EF Core parameterizes each query with the live tenant value.
-        b.Entity<TenantMembership>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<Event>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<EventMembership>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<Invitation>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<Room>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<ScheduleItem>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<ScheduleItemRun>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<RoomTimerState>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<MessageTemplate>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
-        b.Entity<AuditLogEntry>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<TenantMembership>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<Event>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<EventMembership>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<Invitation>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<Room>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<ScheduleItem>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<ScheduleItemRun>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<RoomTimerState>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<MessageTemplate>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<AuditLogEntry>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
     }
 }

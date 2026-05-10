@@ -47,12 +47,18 @@ public sealed class MagicLinkService(
 
     public async Task<User?> ConsumeAsync(string token, CancellationToken ct)
     {
-        var link = await db.AuthMagicLinks.IgnoreQueryFilters().Include(l => l.User).FirstOrDefaultAsync(l => l.Token == token, ct);
-        if (link is null) return null;
-        if (link.UsedAt is not null) return null;
-        if (link.ExpiresAt < clock.UtcNow) return null;
-        link.UsedAt = clock.UtcNow;
-        await db.SaveChangesAsync(ct);
-        return link.User;
+        var now = clock.UtcNow;
+        // Atomic claim: UPDATE … SET UsedAt = now WHERE Token = ? AND UsedAt IS NULL AND ExpiresAt >= now.
+        // Only one of N concurrent requests with the same token will see rows = 1.
+        var rows = await db.AuthMagicLinks
+            .IgnoreQueryFilters()
+            .Where(l => l.Token == token && l.UsedAt == null && l.ExpiresAt >= now)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(l => l.UsedAt, _ => now), ct);
+        if (rows == 0) return null;
+
+        return await db.Users
+            .IgnoreQueryFilters()
+            .Where(u => u.Id == db.AuthMagicLinks.IgnoreQueryFilters().Where(l => l.Token == token).Select(l => l.UserId).FirstOrDefault())
+            .FirstOrDefaultAsync(ct);
     }
 }

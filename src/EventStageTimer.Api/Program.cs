@@ -141,7 +141,8 @@ app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();
 
 app.MapControllers();
 app.MapHub<EventStageTimer.Api.Hubs.TimerHub>("/hub/timer");
-app.MapOpenApi();
+if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Testing")
+    app.MapOpenApi();
 
 // Liveness probe: process responds (no DB check)
 app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions

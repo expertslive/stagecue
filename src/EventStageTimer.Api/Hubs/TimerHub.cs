@@ -1,8 +1,10 @@
 using EventStageTimer.Api.Auth.Identity;
 using EventStageTimer.Api.Auth.Public;
 using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
 using EventStageTimer.Domain.Timer;
 using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Tenancy;
 using EventStageTimer.Infrastructure.Timer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -23,10 +25,26 @@ public sealed class TimerHub(
     AppDbContext db,
     ITimerCommandService commands,
     PublicAccessContext publicCtx,
+    ITenantContext tenantContext,
     IClock clock) : Hub
 {
+    /// <summary>
+    /// SignalR creates a fresh DI scope per hub method invocation, so the request-scoped
+    /// <see cref="ITenantContext"/> arrives empty. We rebuild it from the authenticated
+    /// user's <c>tid</c> claim (or the public access code's resolved tenant) before
+    /// touching the DB so EF's strict tenant filter applies correctly.
+    /// </summary>
+    private void EnsureTenantContext()
+    {
+        if (tenantContext.TenantId.HasValue) return;
+        if (publicCtx.TenantId is { } publicTenant) { tenantContext.Set(publicTenant); return; }
+        var tid = Context.User?.FindFirstValue("tid");
+        if (Guid.TryParse(tid, out var fromClaim)) tenantContext.Set(fromClaim);
+    }
+
     public override async Task OnConnectedAsync()
     {
+        EnsureTenantContext();
         // Authenticated operator: join groups for any rooms in their accessible events.
         var userIdClaim = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
         if (Guid.TryParse(userIdClaim, out var userId))
@@ -63,51 +81,56 @@ public sealed class TimerHub(
         await base.OnConnectedAsync();
     }
 
-    /// <summary>Returns the current snapshot for a room. Caller must be in the room's group.</summary>
+    /// <summary>Returns the current snapshot for a room. Caller must have at least Viewer-level access (or be the public-code client for this room).</summary>
     public async Task<Snapshot?> Resync(Guid roomId)
     {
-        var canSee = (publicCtx.RoomId == roomId)
-                  || (Context.User?.FindFirstValue(ClaimTypes.NameIdentifier) is { } uid
-                      && Guid.TryParse(uid, out var userId)
-                      && await db.Rooms.AnyAsync(r => r.Id == roomId && r.Event.Memberships.Any(m => m.UserId == userId)));
-        if (!canSee) throw new HubException("Forbidden");
+        EnsureTenantContext();
+        if (publicCtx.RoomId == roomId)
+            return await commands.GetSnapshotAsync(roomId, Context.ConnectionAborted);
+
+        await EnsureRoomAccessAsync(roomId, EventRole.Viewer);
         return await commands.GetSnapshotAsync(roomId, Context.ConnectionAborted);
     }
 
     // -------- State-changing methods (versioned) --------
+    // Each method requires at least RoomOperator role on the room (which an EventAdmin
+    // satisfies because EventRole values are ordered numerically: EventAdmin=1, RoomOperator=2,
+    // Viewer=3, and our access checks accept role ≤ MinimumRole).
 
     public Task<Snapshot> StartAuto(Guid roomId, long version) =>
-        InvokeAsync(() => commands.StartAutoAsync(roomId, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.StartAutoAsync(roomId, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> StartItem(Guid roomId, Guid scheduleItemId, long version) =>
-        InvokeAsync(() => commands.StartItemAsync(roomId, scheduleItemId, RunTriggerKind.Operator, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.StartItemAsync(roomId, scheduleItemId, RunTriggerKind.Operator, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> Pause(Guid roomId, long version) =>
-        InvokeAsync(() => commands.PauseAsync(roomId, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.PauseAsync(roomId, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> Resume(Guid roomId, long version) =>
-        InvokeAsync(() => commands.ResumeAsync(roomId, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.ResumeAsync(roomId, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> Stop(Guid roomId, long version) =>
-        InvokeAsync(() => commands.StopAsync(roomId, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.StopAsync(roomId, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> Reset(Guid roomId, long version) =>
-        InvokeAsync(() => commands.ResetAsync(roomId, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.ResetAsync(roomId, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> SkipNext(Guid roomId, long version) =>
-        InvokeAsync(() => commands.SkipNextAsync(roomId, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.SkipNextAsync(roomId, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> AdjustTime(Guid roomId, int deltaSec, long version) =>
-        InvokeAsync(() => commands.AdjustTimeAsync(roomId, deltaSec, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.AdjustTimeAsync(roomId, deltaSec, version, uid, Context.ConnectionAborted), roomId);
 
     public Task<Snapshot> SetExactRemaining(Guid roomId, int remainingSec, long version) =>
-        InvokeAsync(() => commands.SetExactRemainingAsync(roomId, remainingSec, version, RequireOperator(), Context.ConnectionAborted), roomId);
+        InvokeAsync(async uid => await commands.SetExactRemainingAsync(roomId, remainingSec, version, uid, Context.ConnectionAborted), roomId);
 
     // -------- Unversioned message methods (last-write-wins) --------
 
     public async Task<Snapshot> SetMessage(Guid roomId, string? message)
     {
+        EnsureTenantContext();
         var userId = RequireOperator();
+        await EnsureRoomAccessAsync(roomId, EventRole.RoomOperator);
         var result = await commands.SetMessageAsync(roomId, message, userId, Context.ConnectionAborted);
         if (!result.IsSuccess) throw new HubException($"{result.Outcome}");
         await Clients.Group(HubGroups.Room(roomId)).SendAsync("MessageChanged", new { roomId, message });
@@ -126,9 +149,45 @@ public sealed class TimerHub(
         return userId;
     }
 
-    private async Task<Snapshot> InvokeAsync(Func<Task<TimerOperationResult>> command, Guid roomId)
+    /// <summary>
+    /// Verifies that the calling user has at least the requested role on the parent event of <paramref name="roomId"/>.
+    /// For RoomOperator, additionally requires that the room is in the user's scoped-rooms join.
+    /// EventAdmin role satisfies any minimum role.
+    /// </summary>
+    private async Task EnsureRoomAccessAsync(Guid roomId, EventRole minimumRole)
     {
-        var result = await command();
+        var userId = RequireOperator();
+        // System-scoped lookup — the hub method runs in the user's request scope but tenant
+        // matching is enforced by joining through Event.Memberships, which the global query
+        // filter already restricts to the caller's tenant.
+        var room = await db.Rooms
+            .Where(r => r.Id == roomId)
+            .Select(r => new { r.Id, r.EventId })
+            .FirstOrDefaultAsync();
+        if (room is null) throw new HubException("Forbidden");
+
+        var membership = await db.EventMemberships
+            .Where(m => m.EventId == room.EventId && m.UserId == userId)
+            .Select(m => new { m.Id, m.Role })
+            .FirstOrDefaultAsync();
+        if (membership is null) throw new HubException("Forbidden");
+        if (membership.Role > minimumRole) throw new HubException("Forbidden");
+
+        if (membership.Role == EventRole.RoomOperator && minimumRole == EventRole.RoomOperator)
+        {
+            var inScope = await db.EventMembershipRooms
+                .AnyAsync(emr => emr.EventMembershipId == membership.Id && emr.RoomId == roomId);
+            if (!inScope) throw new HubException("Forbidden");
+        }
+    }
+
+    private async Task<Snapshot> InvokeAsync(Func<Guid, Task<TimerOperationResult>> command, Guid roomId)
+    {
+        EnsureTenantContext();
+        var userId = RequireOperator();
+        await EnsureRoomAccessAsync(roomId, EventRole.RoomOperator);
+
+        var result = await command(userId);
         if (!result.IsSuccess) throw new HubException($"{result.Outcome}");
         var snapshot = result.Snapshot!;
         await Clients.Group(HubGroups.Room(roomId)).SendAsync("RoomStateChanged", snapshot);
@@ -137,4 +196,7 @@ public sealed class TimerHub(
         await Clients.Group(HubGroups.EventControl(eventId)).SendAsync("RoomStateChanged", snapshot);
         return snapshot;
     }
+
+    // Suppress unused-parameter warning for `clock` until it's wired into a future feature.
+    private void _SuppressUnused() => _ = clock;
 }

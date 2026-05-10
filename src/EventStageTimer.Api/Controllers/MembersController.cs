@@ -37,6 +37,16 @@ public sealed class MembersController(AppDbContext db) : ControllerBase
             .Include(x => x.ScopedRooms)
             .FirstOrDefaultAsync(x => x.Id == membershipId && x.EventId == eventId, ct);
         if (m is null) return NotFound();
+
+        // Prevent demoting the last EventAdmin — would leave the event unmanageable.
+        if (m.Role == EventRole.EventAdmin && body.Role != EventRole.EventAdmin)
+        {
+            var otherAdmins = await db.EventMemberships
+                .CountAsync(x => x.EventId == eventId && x.Role == EventRole.EventAdmin && x.Id != m.Id, ct);
+            if (otherAdmins == 0)
+                return Conflict(new { error = "LastAdmin", message = "Cannot demote the last EventAdmin." });
+        }
+
         m.Role = body.Role;
         m.ScopedRooms.Clear();
         if (body.Role == EventRole.RoomOperator && body.ScopedRoomIds is { } ids)
@@ -54,6 +64,15 @@ public sealed class MembersController(AppDbContext db) : ControllerBase
     {
         var m = await db.EventMemberships.FirstOrDefaultAsync(x => x.Id == membershipId && x.EventId == eventId, ct);
         if (m is null) return NotFound();
+
+        if (m.Role == EventRole.EventAdmin)
+        {
+            var otherAdmins = await db.EventMemberships
+                .CountAsync(x => x.EventId == eventId && x.Role == EventRole.EventAdmin && x.Id != m.Id, ct);
+            if (otherAdmins == 0)
+                return Conflict(new { error = "LastAdmin", message = "Cannot remove the last EventAdmin." });
+        }
+
         db.EventMemberships.Remove(m);
         await db.SaveChangesAsync(ct);
         return NoContent();

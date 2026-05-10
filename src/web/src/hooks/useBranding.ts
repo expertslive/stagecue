@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { branding } from "@/api/branding";
 import { applyTheme, mergeTheme } from "@/theme/applyTheme";
+import { defaultTheme } from "@/theme/defaults";
 
 export function useBranding(code: string | undefined, scope: "r" | "e") {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -16,7 +17,13 @@ export function useBranding(code: string | undefined, scope: "r" | "e") {
       setLogoUrl(info.logoUrl);
       setEventName(info.eventName);
     }).catch(() => { /* fall back to defaults */ });
-    return () => { cancelled = true; };
+
+    // Reset to defaults on unmount or when scope/code changes so we don't leak
+    // one event's theme into other routes (e.g. operator dashboard).
+    return () => {
+      cancelled = true;
+      applyTheme(document.documentElement, defaultTheme);
+    };
   }, [code, scope]);
 
   return { logoUrl, eventName };
