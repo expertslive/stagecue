@@ -1,5 +1,4 @@
 using EventStageTimer.Domain.Entities;
-using EventStageTimer.Infrastructure.Persistence.ModelConfiguration;
 using EventStageTimer.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -11,6 +10,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     : IdentityDbContext<User, IdentityRole<Guid>, Guid>(options)
 {
     private readonly ITenantContext _tenantContext = tenantContext;
+
+    /// <summary>EF Core query filters reference this property so each query gets parameterized
+    /// with the current tenant. Reading via a context-instance member ensures EF re-evaluates
+    /// per query rather than caching the value at model build.</summary>
+    public Guid? CurrentTenantId => _tenantContext.TenantId;
 
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
@@ -72,12 +76,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
         });
 
-        // EventMembershipRoom (composite key)
+        // EventMembershipRoom (composite key) — Restrict on Room to avoid cascade cycle via Event→Room
         b.Entity<EventMembershipRoom>(e =>
         {
             e.HasKey(x => new { x.EventMembershipId, x.RoomId });
             e.HasOne(x => x.EventMembership).WithMany(em => em.ScopedRooms).HasForeignKey(x => x.EventMembershipId);
-            e.HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId);
+            e.HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // Invitation / InvitationRoom
@@ -91,7 +95,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             e.HasKey(x => new { x.InvitationId, x.RoomId });
             e.HasOne(x => x.Invitation).WithMany(i => i.ScopedRooms).HasForeignKey(x => x.InvitationId);
-            e.HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId);
+            e.HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // Room
@@ -120,11 +124,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.HasOne(x => x.ScheduleItem).WithMany(s => s.Runs).HasForeignKey(x => x.ScheduleItemId);
         });
 
-        // RoomTimerState
+        // RoomTimerState — Version is a manual long, NOT a SQL rowversion (see entity comment)
         b.Entity<RoomTimerState>(e =>
         {
             e.HasKey(x => x.RoomId);
-            e.Property(x => x.Version).IsRowVersion();
             e.Property(x => x.CurrentMessage).HasMaxLength(500);
             e.HasOne(x => x.Room).WithOne(r => r.TimerState).HasForeignKey<RoomTimerState>(x => x.RoomId);
             e.HasOne(x => x.CurrentItem).WithMany().HasForeignKey(x => x.CurrentItemId).OnDelete(DeleteBehavior.Restrict);
@@ -161,6 +164,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(x => x.Subject).HasMaxLength(500);
         });
 
-        TenancyQueryFilters.Apply(b, () => _tenantContext.TenantId);
+        // Multi-tenant filters — referencing CurrentTenantId (context-instance member)
+        // so EF Core parameterizes each query with the live tenant value.
+        b.Entity<TenantMembership>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<Event>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<EventMembership>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<Invitation>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<Room>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<ScheduleItem>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<ScheduleItemRun>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<RoomTimerState>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<MessageTemplate>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
+        b.Entity<AuditLogEntry>().HasQueryFilter(x => CurrentTenantId == null || x.TenantId == CurrentTenantId);
     }
 }

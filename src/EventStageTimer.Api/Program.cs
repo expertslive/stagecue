@@ -7,7 +7,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(o =>
+{
+    o.EnableDetailedErrors = builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Testing";
+});
 
 // Tenancy
 builder.Services.AddScoped<ITenantContext, TenantContext>();
@@ -73,6 +76,7 @@ if (args.Contains("--seed"))
     return;
 }
 
+app.UseRouting();
 app.UseMiddleware<EventStageTimer.Api.Middleware.PublicRateLimitMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();

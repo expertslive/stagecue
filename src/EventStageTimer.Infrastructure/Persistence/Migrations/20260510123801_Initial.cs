@@ -408,7 +408,7 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                         column: x => x.RoomId,
                         principalTable: "Rooms",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -432,7 +432,7 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                         column: x => x.RoomId,
                         principalTable: "Rooms",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -503,7 +503,7 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     PausedAccumSec = table.Column<int>(type: "int", nullable: false),
                     AdjustmentSec = table.Column<int>(type: "int", nullable: false),
                     CurrentMessage = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
-                    Version = table.Column<byte[]>(type: "rowversion", rowVersion: true, nullable: false)
+                    Version = table.Column<long>(type: "bigint", nullable: false)
                 },
                 constraints: table =>
                 {

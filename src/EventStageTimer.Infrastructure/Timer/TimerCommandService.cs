@@ -20,42 +20,47 @@ public sealed class TimerCommandService(AppDbContext db, IClock clock) : ITimerC
     public async Task<TimerOperationResult> StartItemAsync(
         Guid roomId, Guid scheduleItemId, RunTriggerKind trigger, long? expectedVersion, Guid? userId, CancellationToken ct)
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var state = await db.RoomTimerStates
-            .Include(s => s.CurrentItem)
-            .FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
-        if (state is null) return TimerOperationResult.Fail(TimerOperationOutcome.NotFound);
-
-        if (expectedVersion is { } expected && BitConverter.ToInt64(state.Version, 0) != expected)
-            return TimerOperationResult.Fail(TimerOperationOutcome.StaleVersion);
-
-        var item = await db.ScheduleItems.FirstOrDefaultAsync(s => s.Id == scheduleItemId && s.RoomId == roomId, ct);
-        if (item is null) return TimerOperationResult.Fail(TimerOperationOutcome.NoActiveItem);
-
-        var sm = TimerStateMachine.StartItem(state, item, clock.UtcNow);
-        if (sm.IsFailure) return TimerOperationResult.Fail(MapError(sm.Error));
-
-        var nextRunNumber = await db.ScheduleItemRuns
-            .Where(r => r.ScheduleItemId == item.Id)
-            .Select(r => (int?)r.RunNumber).MaxAsync(ct) ?? 0;
-        var run = new ScheduleItemRun
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync<TimerOperationResult>(async () =>
         {
-            Id = Guid.NewGuid(),
-            TenantId = state.TenantId,
-            ScheduleItemId = item.Id,
-            RunNumber = nextRunNumber + 1,
-            Trigger = (RunTrigger)(int)trigger,
-            StartedAtUtc = clock.UtcNow,
-        };
-        db.ScheduleItemRuns.Add(run);
-        state.CurrentRunId = run.Id;
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var state = await db.RoomTimerStates
+                .Include(s => s.CurrentItem)
+                .FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
+            if (state is null) return TimerOperationResult.Fail(TimerOperationOutcome.NotFound);
 
-        Audit(state, userId, trigger == RunTriggerKind.Scheduler ? "AutoStart" : "Start",
-            $"{{\"scheduleItemId\":\"{item.Id}\",\"trigger\":\"{trigger}\"}}");
+            if (expectedVersion is { } expected && state.Version != expected)
+                return TimerOperationResult.Fail(TimerOperationOutcome.StaleVersion);
 
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        return TimerOperationResult.Ok((await BuildSnapshotAsync(state, ct))!);
+            var item = await db.ScheduleItems.FirstOrDefaultAsync(s => s.Id == scheduleItemId && s.RoomId == roomId, ct);
+            if (item is null) return TimerOperationResult.Fail(TimerOperationOutcome.NoActiveItem);
+
+            var sm = TimerStateMachine.StartItem(state, item, clock.UtcNow);
+            if (sm.IsFailure) return TimerOperationResult.Fail(MapError(sm.Error));
+
+            var nextRunNumber = await db.ScheduleItemRuns
+                .Where(r => r.ScheduleItemId == item.Id)
+                .Select(r => (int?)r.RunNumber).MaxAsync(ct) ?? 0;
+            var run = new ScheduleItemRun
+            {
+                Id = Guid.NewGuid(),
+                TenantId = state.TenantId,
+                ScheduleItemId = item.Id,
+                RunNumber = nextRunNumber + 1,
+                Trigger = (RunTrigger)(int)trigger,
+                StartedAtUtc = clock.UtcNow,
+            };
+            db.ScheduleItemRuns.Add(run);
+            state.CurrentRunId = run.Id;
+
+            Audit(state, userId, trigger == RunTriggerKind.Scheduler ? "AutoStart" : "Start",
+                $"{{\"scheduleItemId\":\"{item.Id}\",\"trigger\":\"{trigger}\"}}");
+
+            state.Version++;
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return TimerOperationResult.Ok((await BuildSnapshotAsync(state, ct))!);
+        });
     }
 
     public async Task<TimerOperationResult> StartAutoAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
@@ -145,9 +150,12 @@ public sealed class TimerCommandService(AppDbContext db, IClock clock) : ITimerC
 
     public async Task<TimerOperationResult> SkipNextAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync<TimerOperationResult>(async () =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+            var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
         if (state is null) return TimerOperationResult.Fail(fail!.Value);
 
         Guid? nextItemId = null;
@@ -193,11 +201,12 @@ public sealed class TimerCommandService(AppDbContext db, IClock clock) : ITimerC
         db.ScheduleItemRuns.Add(newRun);
         state.CurrentRunId = newRun.Id;
 
-        Audit(state, userId, "SkipNext", $"{{\"nextItemId\":\"{nextItem.Id}\"}}");
+            Audit(state, userId, "SkipNext", $"{{\"nextItemId\":\"{nextItem.Id}\"}}");
 
-        var saved = await PersistAndReturnAsync(state, ct);
-        await tx.CommitAsync(ct);
-        return saved;
+            var saved = await PersistAndReturnAsync(state, ct);
+            await tx.CommitAsync(ct);
+            return saved;
+        });
     }
 
     public async Task<TimerOperationResult> AdjustTimeAsync(Guid roomId, int deltaSec, long expectedVersion, Guid userId, CancellationToken ct)
@@ -267,13 +276,14 @@ public sealed class TimerCommandService(AppDbContext db, IClock clock) : ITimerC
             .Include(s => s.CurrentItem)
             .FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
         if (state is null) return (null, TimerOperationOutcome.NotFound);
-        if (BitConverter.ToInt64(state.Version, 0) != expectedVersion)
+        if (state.Version != expectedVersion)
             return (null, TimerOperationOutcome.StaleVersion);
         return (state, null);
     }
 
     private async Task<TimerOperationResult> PersistAndReturnAsync(RoomTimerState state, CancellationToken ct)
     {
+        state.Version++; // Increment on every state-changing command
         await db.SaveChangesAsync(ct);
         var snapshot = await BuildSnapshotAsync(state, ct);
         return TimerOperationResult.Ok(snapshot!);
@@ -325,7 +335,7 @@ public sealed class TimerCommandService(AppDbContext db, IClock clock) : ITimerC
             s.StartedAtUtc, s.PreRollEndsAtUtc, s.PauseStartedAtUtc,
             s.PausedAccumSec, s.AdjustmentSec, pauseRemainingMs,
             s.CurrentMessage, clock.UtcNow,
-            BitConverter.ToInt64(s.Version, 0));
+            s.Version);
     }
 
     private static TimerOperationOutcome MapError(TimerCommandError e) => e switch

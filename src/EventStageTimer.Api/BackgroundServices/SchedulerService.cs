@@ -50,7 +50,7 @@ public sealed class SchedulerService(
         foreach (var item in dueItems)
         {
             log.LogInformation("Auto-starting item {ItemId} in room {RoomId}", item.Id, item.RoomId);
-            var version = BitConverter.ToInt64(item.Room.TimerState!.Version, 0);
+            var version = item.Room.TimerState!.Version;
             var result = await commands.StartItemAsync(item.RoomId, item.Id, RunTriggerKind.Scheduler, version, userId: null, ct);
             if (result.IsSuccess && result.Snapshot is not null)
                 await BroadcastAsync(db, item.RoomId, result.Snapshot, ct);

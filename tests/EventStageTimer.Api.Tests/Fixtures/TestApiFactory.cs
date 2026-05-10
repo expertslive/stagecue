@@ -3,6 +3,7 @@ using EventStageTimer.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +17,18 @@ public sealed class TestApiFactory(SqlServerFixture sql) : WebApplicationFactory
     /// <summary>The "est.session" cookie captured from the most recent sign-in response.</summary>
     public string? LastSignInCookie { get; set; }
 
+    /// <summary>Per-instance database name so parallel test classes don't collide.</summary>
+    private readonly string _dbName = $"EventStageTimer_Test_{Guid.NewGuid():N}";
+
+    private string ConnectionString
+    {
+        get
+        {
+            var sb = new SqlConnectionStringBuilder(sql.ConnectionString) { InitialCatalog = _dbName };
+            return sb.ConnectionString;
+        }
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -24,7 +37,7 @@ public sealed class TestApiFactory(SqlServerFixture sql) : WebApplicationFactory
         {
             cfg.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:Default"] = sql.ConnectionString,
+                ["ConnectionStrings:Default"] = ConnectionString,
                 ["Database:AutoMigrate"] = "true",
                 ["Auth:Mode"] = "Password",
                 ["App:BaseUrl"] = "http://localhost",
@@ -56,6 +69,23 @@ public sealed class TestApiFactory(SqlServerFixture sql) : WebApplicationFactory
         var recorder = new SetCookieRecorder(this) { InnerHandler = Server.CreateHandler() };
         var client = new HttpClient(recorder) { BaseAddress = Server.BaseAddress };
         return client;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            try
+            {
+                using var conn = new SqlConnection(sql.ConnectionString);
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"IF DB_ID('{_dbName}') IS NOT NULL BEGIN ALTER DATABASE [{_dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_dbName}]; END";
+                cmd.ExecuteNonQuery();
+            }
+            catch { /* best-effort cleanup */ }
+        }
+        base.Dispose(disposing);
     }
 
     private sealed class SetCookieRecorder(TestApiFactory factory) : DelegatingHandler

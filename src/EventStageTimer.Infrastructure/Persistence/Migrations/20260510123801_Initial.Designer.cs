@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace EventStageTimer.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260510120033_Initial")]
+    [Migration("20260510123801_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -401,11 +401,8 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<byte[]>("Version")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
+                    b.Property<long>("Version")
+                        .HasColumnType("bigint");
 
                     b.HasKey("RoomId");
 
@@ -823,7 +820,7 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.HasOne("EventStageTimer.Domain.Entities.Room", "Room")
                         .WithMany()
                         .HasForeignKey("RoomId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("EventMembership");
@@ -853,7 +850,7 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.HasOne("EventStageTimer.Domain.Entities.Room", "Room")
                         .WithMany()
                         .HasForeignKey("RoomId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Invitation");

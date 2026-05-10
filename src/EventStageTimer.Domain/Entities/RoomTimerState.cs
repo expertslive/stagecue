@@ -16,6 +16,8 @@ public class RoomTimerState
     public int PausedAccumSec { get; set; }
     public int AdjustmentSec { get; set; }
     public string? CurrentMessage { get; set; }
-    // SQL Server rowversion (8 bytes). Mapped via [Timestamp] in the EF config.
-    public byte[] Version { get; set; } = [];
+    // Manually-incremented version (NOT a SQL rowversion).
+    // We increment on every state-changing command but NOT on SetMessage,
+    // so message updates don't invalidate concurrent state commands (spec §4.5, §6.4).
+    public long Version { get; set; }
 }

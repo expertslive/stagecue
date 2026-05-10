@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 using System.Net.Http.Json;
 
@@ -40,7 +41,9 @@ public static class AuthHelpers
         return new HubConnectionBuilder()
             .WithUrl(new Uri(signedInClient.BaseAddress!, hubPath).ToString(), o =>
             {
-                o.HttpMessageHandlerFactory = inner => new CookieAttachingHandler(inner, cookie);
+                // TestServer doesn't support WebSocket transport; force long polling.
+                o.Transports = HttpTransportType.LongPolling;
+                o.HttpMessageHandlerFactory = _ => new CookieAttachingHandler(cookie) { InnerHandler = factory.Server.CreateHandler() };
             })
             .Build();
     }
@@ -50,11 +53,15 @@ public static class AuthHelpers
     {
         var url = new Uri(client.BaseAddress!, $"{hubPath}?code={Uri.EscapeDataString(accessCode)}").ToString();
         return new HubConnectionBuilder()
-            .WithUrl(url, o => o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler())
+            .WithUrl(url, o =>
+            {
+                o.Transports = HttpTransportType.LongPolling;
+                o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler();
+            })
             .Build();
     }
 
-    private sealed class CookieAttachingHandler(HttpMessageHandler inner, string cookie) : DelegatingHandler(inner)
+    private sealed class CookieAttachingHandler(string cookie) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
