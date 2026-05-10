@@ -65,6 +65,14 @@ if (autoMigrate)
     db.Database.Migrate();
 }
 
+// Optional one-shot seed mode for dev
+if (args.Contains("--seed"))
+{
+    var seeded = await EventStageTimer.Api.Setup.SeedData.CreateMinimalAsync(app.Services);
+    Console.WriteLine($"Seeded: tenant={seeded.TenantId} owner={seeded.OwnerUserId} room={seeded.RoomId} accessCode={seeded.RoomAccessCode}");
+    return;
+}
+
 app.UseMiddleware<EventStageTimer.Api.Middleware.PublicRateLimitMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
