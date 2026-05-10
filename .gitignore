@@ -1,0 +1,52 @@
+# Brainstorming artifacts
+.superpowers/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+publish/
+*.pfx
+
+# Node / React
+node_modules/
+dist/
+build/
+.cache/
+.parcel-cache/
+.vite/
+.eslintcache
+*.local
+
+# IDE
+.idea/
+.vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+appsettings.Local.json
+*.secrets.json
+
+# Logs
+*.log
+logs/
+
+# Local data
+*.mdf
+*.ldf
+data/
+uploads/
