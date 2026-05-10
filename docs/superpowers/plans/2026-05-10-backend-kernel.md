@@ -1916,3 +1916,730 @@ git add . && git commit -m "feat: TimerStateMachine pure-domain logic with TDD c
 ```
 
 ---
+
+## Task 13: Server-side `Snapshot` DTO + thresholds parsing
+
+**Files:**
+- Create: `src/EventStageTimer.Domain/Timer/Snapshot.cs`
+- Create: `src/EventStageTimer.Domain/Timer/Threshold.cs`
+- Test: `tests/EventStageTimer.Domain.Tests/Timer/ThresholdSelectionTests.cs`
+
+Spec anchors: §6.3 client display computation (server emits the data the client needs), §6.4 snapshot payload.
+
+- [ ] **Step 1: Define `Threshold` and `Snapshot` records**
+
+Create `src/EventStageTimer.Domain/Timer/Threshold.cs`:
+
+```csharp
+namespace EventStageTimer.Domain.Timer;
+
+public sealed record Threshold(int SecondsRemaining, string ColorToken, string? Label = null);
+```
+
+Create `src/EventStageTimer.Domain/Timer/Snapshot.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+
+namespace EventStageTimer.Domain.Timer;
+
+public sealed record SnapshotItem(Guid Id, string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, IReadOnlyList<Threshold> Thresholds);
+public sealed record SnapshotNextItem(Guid Id, string Title, DateTime ScheduledStartUtc);
+
+public sealed record Snapshot(
+    Guid RoomId,
+    SnapshotItem? CurrentItem,
+    Guid? CurrentRunId,
+    SnapshotNextItem? NextItem,
+    TimerPhase Phase,
+    DateTime? StartedAtUtc,
+    DateTime? PreRollEndsAtUtc,
+    DateTime? PauseStartedAtUtc,
+    int PausedAccumSec,
+    int AdjustmentSec,
+    int? PauseRemainingMs,
+    string? CurrentMessage,
+    DateTime ServerNowUtc,
+    long Version);
+```
+
+- [ ] **Step 2: Add helpers — `ThresholdParser`, `ThresholdSelector`**
+
+Add these as static classes in `src/EventStageTimer.Domain/Timer/Threshold.cs`:
+
+```csharp
+using System.Text.Json;
+
+namespace EventStageTimer.Domain.Timer;
+
+public sealed record Threshold(int SecondsRemaining, string ColorToken, string? Label = null);
+
+public static class ThresholdParser
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static IReadOnlyList<Threshold> Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "[]") return [];
+        return JsonSerializer.Deserialize<List<Threshold>>(json, Options) ?? [];
+    }
+
+    public static string Serialize(IEnumerable<Threshold> thresholds) =>
+        JsonSerializer.Serialize(thresholds, Options);
+}
+
+public static class ThresholdSelector
+{
+    /// <summary>
+    /// Picks the smallest <see cref="Threshold.SecondsRemaining"/> still ≥ <paramref name="remainingMs"/>/1000
+    /// — the tightest threshold we've crossed but not yet crossed past. Returns null if no threshold matches.
+    /// </summary>
+    public static Threshold? Active(IReadOnlyList<Threshold> thresholds, double remainingMs)
+    {
+        if (remainingMs <= 0 || thresholds.Count == 0) return null;
+        Threshold? best = null;
+        foreach (var t in thresholds)
+        {
+            if (t.SecondsRemaining * 1000.0 < remainingMs) continue; // not crossed
+            if (best is null || t.SecondsRemaining < best.SecondsRemaining)
+                best = t;
+        }
+        return best;
+    }
+}
+```
+
+- [ ] **Step 3: Write threshold-selector tests**
+
+Create `tests/EventStageTimer.Domain.Tests/Timer/ThresholdSelectionTests.cs`:
+
+```csharp
+using EventStageTimer.Domain.Timer;
+using FluentAssertions;
+using Xunit;
+
+namespace EventStageTimer.Domain.Tests.Timer;
+
+public class ThresholdSelectionTests
+{
+    private static readonly IReadOnlyList<Threshold> Thresholds =
+    [
+        new(600, "warning"),
+        new(120, "danger"),
+        new(30,  "final"),
+    ];
+
+    [Theory]
+    [InlineData(700_000, null)]    // no threshold matches
+    [InlineData(500_000, "warning")] // only 600 matches; pick 600
+    [InlineData(100_000, "danger")]  // 600 + 120 match; pick 120 (smallest)
+    [InlineData( 20_000, "final")]   // 600 + 120 + 30 match; pick 30
+    [InlineData(    0,    null)]     // overrun branch — caller picks --overrun
+    [InlineData(  -100,   null)]
+    public void Active_picks_smallest_matching_threshold(double remainingMs, string? expectedToken)
+    {
+        var t = ThresholdSelector.Active(Thresholds, remainingMs);
+        t?.ColorToken.Should().Be(expectedToken);
+        if (expectedToken is null) t.Should().BeNull();
+    }
+
+    [Fact]
+    public void Empty_thresholds_returns_null()
+    {
+        ThresholdSelector.Active([], 50_000).Should().BeNull();
+    }
+}
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+dotnet test tests/EventStageTimer.Domain.Tests
+```
+
+Expected: all tests pass (the prior 8 + 7 new threshold cases).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add . && git commit -m "feat: Snapshot DTO + threshold parsing/selection (smallest-matching)"
+```
+
+---
+
+## Task 14: `TimerCommandService` — orchestrates DB writes around the state machine
+
+**Files:**
+- Create: `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`
+- Create: `src/EventStageTimer.Infrastructure/Timer/ITimerCommandService.cs`
+- Create: `src/EventStageTimer.Infrastructure/Timer/TimerOperationResult.cs`
+
+Spec anchors: §4.5 commands, §6.2 transitions (inserting/closing `ScheduleItemRun`), §9 audit.
+
+- [ ] **Step 1: Define the result type used by the hub layer**
+
+Create `src/EventStageTimer.Infrastructure/Timer/TimerOperationResult.cs`:
+
+```csharp
+using EventStageTimer.Domain.Timer;
+
+namespace EventStageTimer.Infrastructure.Timer;
+
+public enum TimerOperationOutcome
+{
+    Ok = 0,
+    StaleVersion = 1,
+    InvalidPhase = 2,
+    AdjustmentOutOfBounds = 3,
+    NoActiveItem = 4,
+    NoNextItem = 5,
+    NotFound = 6,
+}
+
+public sealed record TimerOperationResult(TimerOperationOutcome Outcome, Snapshot? Snapshot, string? Message = null)
+{
+    public bool IsSuccess => Outcome == TimerOperationOutcome.Ok;
+    public static TimerOperationResult Ok(Snapshot s) => new(TimerOperationOutcome.Ok, s);
+    public static TimerOperationResult Fail(TimerOperationOutcome o, string? msg = null) => new(o, null, msg);
+}
+```
+
+- [ ] **Step 2: Define the service interface**
+
+Create `src/EventStageTimer.Infrastructure/Timer/ITimerCommandService.cs`:
+
+```csharp
+namespace EventStageTimer.Infrastructure.Timer;
+
+public interface ITimerCommandService
+{
+    Task<TimerOperationResult> StartItemAsync(Guid roomId, Guid scheduleItemId, RunTriggerKind trigger, long? expectedVersion, Guid? userId, CancellationToken ct);
+    Task<TimerOperationResult> StartAutoAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> PauseAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> ResumeAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> StopAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> ResetAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> SkipNextAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> AdjustTimeAsync(Guid roomId, int deltaSec, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> SetExactRemainingAsync(Guid roomId, int remainingSec, long expectedVersion, Guid userId, CancellationToken ct);
+    Task<TimerOperationResult> SetMessageAsync(Guid roomId, string? message, Guid userId, CancellationToken ct); // unversioned
+    Task<TimerOperationResult> ExpirePreRollAsync(Guid roomId, CancellationToken ct); // scheduler-driven, unversioned
+    Task<Snapshot?> GetSnapshotAsync(Guid roomId, CancellationToken ct);
+}
+
+public enum RunTriggerKind { Operator = 1, Scheduler = 2, Skip = 3 }
+```
+
+- [ ] **Step 3: Skeleton implementation (only `GetSnapshotAsync` and `StartItemAsync` for now)**
+
+Create `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`:
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Domain.Timer;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Infrastructure.Timer;
+
+public sealed class TimerCommandService(AppDbContext db, IClock clock) : ITimerCommandService
+{
+    public async Task<Snapshot?> GetSnapshotAsync(Guid roomId, CancellationToken ct)
+    {
+        var state = await db.RoomTimerStates
+            .Include(s => s.CurrentItem)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
+        return state is null ? null : await BuildSnapshotAsync(state, ct);
+    }
+
+    public async Task<TimerOperationResult> StartItemAsync(
+        Guid roomId, Guid scheduleItemId, RunTriggerKind trigger, long? expectedVersion, Guid? userId, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var state = await db.RoomTimerStates
+            .Include(s => s.CurrentItem)
+            .FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
+        if (state is null) return TimerOperationResult.Fail(TimerOperationOutcome.NotFound);
+
+        if (expectedVersion is { } expected && BitConverter.ToInt64(state.Version, 0) != expected)
+            return TimerOperationResult.Fail(TimerOperationOutcome.StaleVersion);
+
+        var item = await db.ScheduleItems.FirstOrDefaultAsync(s => s.Id == scheduleItemId && s.RoomId == roomId, ct);
+        if (item is null) return TimerOperationResult.Fail(TimerOperationOutcome.NoActiveItem);
+
+        var sm = TimerStateMachine.StartItem(state, item, clock.UtcNow);
+        if (sm.IsFailure) return TimerOperationResult.Fail(MapError(sm.Error));
+
+        // Insert a new ScheduleItemRun.
+        var nextRunNumber = await db.ScheduleItemRuns
+            .Where(r => r.ScheduleItemId == item.Id)
+            .Select(r => (int?)r.RunNumber).MaxAsync(ct) ?? 0;
+        var run = new ScheduleItemRun
+        {
+            Id = Guid.NewGuid(),
+            TenantId = state.TenantId,
+            ScheduleItemId = item.Id,
+            RunNumber = nextRunNumber + 1,
+            Trigger = (Domain.Entities.RunTrigger)(int)trigger,
+            StartedAtUtc = clock.UtcNow,
+        };
+        db.ScheduleItemRuns.Add(run);
+        state.CurrentRunId = run.Id;
+
+        // Audit
+        db.AuditLog.Add(new AuditLogEntry
+        {
+            Id = Guid.NewGuid(),
+            TenantId = state.TenantId,
+            RoomId = roomId,
+            UserId = userId,
+            Action = trigger == RunTriggerKind.Scheduler ? "AutoStart" : "Start",
+            DetailsJson = $"{{\"scheduleItemId\":\"{item.Id}\",\"trigger\":\"{trigger}\"}}",
+            AtUtc = clock.UtcNow,
+        });
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return TimerOperationResult.Ok((await BuildSnapshotAsync(state, ct))!);
+    }
+
+    // ... remaining methods stubbed in Task 15-19 ...
+    public Task<TimerOperationResult> StartAutoAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> PauseAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> ResumeAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> StopAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> ResetAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> SkipNextAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> AdjustTimeAsync(Guid roomId, int deltaSec, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> SetExactRemainingAsync(Guid roomId, int remainingSec, long expectedVersion, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> SetMessageAsync(Guid roomId, string? message, Guid userId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<TimerOperationResult> ExpirePreRollAsync(Guid roomId, CancellationToken ct) => throw new NotImplementedException();
+
+    private async Task<Snapshot?> BuildSnapshotAsync(RoomTimerState s, CancellationToken ct)
+    {
+        SnapshotItem? cur = null;
+        if (s.CurrentItem is not null)
+            cur = new SnapshotItem(
+                s.CurrentItem.Id, s.CurrentItem.Title, s.CurrentItem.SpeakerName,
+                s.CurrentItem.ScheduledStartUtc, s.CurrentItem.DurationSec, s.CurrentItem.PreRollSec,
+                ThresholdParser.Parse(s.CurrentItem.ThresholdsJson));
+
+        SnapshotNextItem? next = null;
+        if (s.CurrentItem is not null)
+        {
+            var n = await db.ScheduleItems
+                .Where(x => x.RoomId == s.RoomId && x.Position > s.CurrentItem.Position)
+                .OrderBy(x => x.Position)
+                .Select(x => new { x.Id, x.Title, x.ScheduledStartUtc })
+                .FirstOrDefaultAsync(ct);
+            if (n is not null) next = new SnapshotNextItem(n.Id, n.Title, n.ScheduledStartUtc);
+        }
+
+        int? pauseRemainingMs = null;
+        if (s.Phase == TimerPhase.Paused && s.StartedAtUtc is not null && s.CurrentItem is not null && s.PauseStartedAtUtc is not null)
+        {
+            var elapsed = (s.PauseStartedAtUtc.Value - s.StartedAtUtc.Value).TotalSeconds - s.PausedAccumSec;
+            pauseRemainingMs = (int)((s.CurrentItem.DurationSec + s.AdjustmentSec - elapsed) * 1000);
+        }
+
+        return new Snapshot(
+            s.RoomId, cur, s.CurrentRunId, next, s.Phase,
+            s.StartedAtUtc, s.PreRollEndsAtUtc, s.PauseStartedAtUtc,
+            s.PausedAccumSec, s.AdjustmentSec, pauseRemainingMs,
+            s.CurrentMessage, clock.UtcNow,
+            BitConverter.ToInt64(s.Version, 0));
+    }
+
+    private static TimerOperationOutcome MapError(TimerCommandError e) => e switch
+    {
+        TimerCommandError.InvalidPhase => TimerOperationOutcome.InvalidPhase,
+        TimerCommandError.AdjustmentOutOfBounds => TimerOperationOutcome.AdjustmentOutOfBounds,
+        TimerCommandError.NoActiveItem => TimerOperationOutcome.NoActiveItem,
+        TimerCommandError.NoNextItem => TimerOperationOutcome.NoNextItem,
+        _ => TimerOperationOutcome.InvalidPhase,
+    };
+}
+```
+
+- [ ] **Step 4: Wire registration in `Program.cs`**
+
+Add to `Program.cs` after the `AddDbContext` line:
+
+```csharp
+builder.Services.AddSingleton<EventStageTimer.Domain.Common.IClock, EventStageTimer.Domain.Common.SystemClock>();
+builder.Services.AddScoped<EventStageTimer.Infrastructure.Timer.ITimerCommandService, EventStageTimer.Infrastructure.Timer.TimerCommandService>();
+```
+
+- [ ] **Step 5: Build to verify**
+
+```bash
+dotnet build EventStageTimer.sln
+```
+
+Expected: build succeeds.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add . && git commit -m "feat: TimerCommandService skeleton + StartItem orchestration with run + audit"
+```
+
+---
+
+## Task 15: Implement `Pause` and `Resume` in `TimerCommandService`
+
+**Files:**
+- Modify: `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`
+
+- [ ] **Step 1: Add a private helper to load + version-check + save**
+
+Above the existing methods in `TimerCommandService`, add:
+
+```csharp
+private async Task<(RoomTimerState? state, TimerOperationOutcome? failure)> LoadForCommandAsync(
+    Guid roomId, long expectedVersion, CancellationToken ct)
+{
+    var state = await db.RoomTimerStates
+        .Include(s => s.CurrentItem)
+        .FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
+    if (state is null) return (null, TimerOperationOutcome.NotFound);
+    if (BitConverter.ToInt64(state.Version, 0) != expectedVersion)
+        return (null, TimerOperationOutcome.StaleVersion);
+    return (state, null);
+}
+
+private async Task<TimerOperationResult> PersistAndReturnAsync(RoomTimerState state, CancellationToken ct)
+{
+    await db.SaveChangesAsync(ct);
+    var snapshot = await BuildSnapshotAsync(state, ct);
+    return TimerOperationResult.Ok(snapshot!);
+}
+
+private void Audit(RoomTimerState state, Guid? userId, string action, string detailsJson)
+{
+    db.AuditLog.Add(new AuditLogEntry
+    {
+        Id = Guid.NewGuid(),
+        TenantId = state.TenantId,
+        RoomId = state.RoomId,
+        UserId = userId,
+        Action = action,
+        DetailsJson = detailsJson,
+        AtUtc = clock.UtcNow,
+    });
+}
+```
+
+- [ ] **Step 2: Replace the `PauseAsync` stub**
+
+```csharp
+public async Task<TimerOperationResult> PauseAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+    var r = TimerStateMachine.Pause(state, clock.UtcNow);
+    if (r.IsFailure) return TimerOperationResult.Fail(MapError(r.Error));
+    Audit(state, userId, "Pause", "{}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 3: Replace the `ResumeAsync` stub**
+
+```csharp
+public async Task<TimerOperationResult> ResumeAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+    var r = TimerStateMachine.Resume(state, clock.UtcNow);
+    if (r.IsFailure) return TimerOperationResult.Fail(MapError(r.Error));
+    Audit(state, userId, "Resume", "{}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 4: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: implement Pause/Resume command service methods"
+```
+
+---
+
+## Task 16: Implement `Stop` and `Reset`
+
+**Files:**
+- Modify: `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`
+
+- [ ] **Step 1: Replace `StopAsync` — must close the active `ScheduleItemRun`**
+
+```csharp
+public async Task<TimerOperationResult> StopAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+    var r = TimerStateMachine.Stop(state);
+    if (r.IsFailure) return TimerOperationResult.Fail(MapError(r.Error));
+
+    if (state.CurrentRunId is { } runId)
+    {
+        var run = await db.ScheduleItemRuns.FirstOrDefaultAsync(x => x.Id == runId, ct);
+        if (run is not null)
+        {
+            run.EndedAtUtc = clock.UtcNow;
+            run.EndedReason = RunEndedReason.Stop;
+        }
+        state.CurrentRunId = null;
+    }
+    Audit(state, userId, "Stop", "{}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 2: Replace `ResetAsync`**
+
+```csharp
+public async Task<TimerOperationResult> ResetAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+
+    if (state.CurrentRunId is { } runId)
+    {
+        var run = await db.ScheduleItemRuns.FirstOrDefaultAsync(x => x.Id == runId, ct);
+        if (run is not null)
+        {
+            run.EndedAtUtc = clock.UtcNow;
+            run.EndedReason = RunEndedReason.Reset;
+        }
+        state.CurrentRunId = null;
+    }
+
+    TimerStateMachine.Reset(state);
+    Audit(state, userId, "Reset", "{}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: implement Stop and Reset (close run + audit)"
+```
+
+---
+
+## Task 17: Implement `SkipNext` (atomic stop-current + start-next)
+
+**Files:**
+- Modify: `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`
+
+Spec anchor: §4.5 Skip-next is atomic Stop + StartItem(next).
+
+- [ ] **Step 1: Replace the `SkipNextAsync` stub**
+
+```csharp
+public async Task<TimerOperationResult> SkipNextAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+
+    // Determine next item by Position with no closed run.
+    Guid? nextItemId = null;
+    if (state.CurrentItem is not null)
+    {
+        nextItemId = await db.ScheduleItems
+            .Where(s => s.RoomId == roomId && s.Position > state.CurrentItem.Position
+                        && !s.Runs.Any(r => r.EndedAtUtc != null))
+            .OrderBy(s => s.Position)
+            .Select(s => (Guid?)s.Id)
+            .FirstOrDefaultAsync(ct);
+    }
+    if (nextItemId is null) return TimerOperationResult.Fail(TimerOperationOutcome.NoNextItem);
+
+    // Close current run with SkipReplaced
+    if (state.CurrentRunId is { } runId)
+    {
+        var run = await db.ScheduleItemRuns.FirstOrDefaultAsync(x => x.Id == runId, ct);
+        if (run is not null)
+        {
+            run.EndedAtUtc = clock.UtcNow;
+            run.EndedReason = RunEndedReason.SkipReplaced;
+        }
+        state.CurrentRunId = null;
+    }
+
+    // Force phase to Idle so StartItem precondition is met
+    state.Phase = TimerPhase.Idle;
+
+    var nextItem = await db.ScheduleItems.FirstAsync(x => x.Id == nextItemId.Value, ct);
+    var sm = TimerStateMachine.StartItem(state, nextItem, clock.UtcNow);
+    if (sm.IsFailure) return TimerOperationResult.Fail(MapError(sm.Error));
+
+    var nextRunNumber = await db.ScheduleItemRuns.Where(r => r.ScheduleItemId == nextItem.Id).Select(r => (int?)r.RunNumber).MaxAsync(ct) ?? 0;
+    var newRun = new ScheduleItemRun
+    {
+        Id = Guid.NewGuid(),
+        TenantId = state.TenantId,
+        ScheduleItemId = nextItem.Id,
+        RunNumber = nextRunNumber + 1,
+        Trigger = RunTrigger.Skip,
+        StartedAtUtc = clock.UtcNow,
+    };
+    db.ScheduleItemRuns.Add(newRun);
+    state.CurrentRunId = newRun.Id;
+
+    Audit(state, userId, "SkipNext", $"{{\"nextItemId\":\"{nextItem.Id}\"}}");
+
+    var saved = await PersistAndReturnAsync(state, ct);
+    await tx.CommitAsync(ct);
+    return saved;
+}
+```
+
+- [ ] **Step 2: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: SkipNext as atomic stop-current + start-next within a transaction"
+```
+
+---
+
+## Task 18: Implement `AdjustTime` and `SetExactRemaining`
+
+**Files:**
+- Modify: `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`
+
+- [ ] **Step 1: Replace `AdjustTimeAsync`**
+
+```csharp
+public async Task<TimerOperationResult> AdjustTimeAsync(Guid roomId, int deltaSec, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+    var r = TimerStateMachine.AdjustTime(state, deltaSec);
+    if (r.IsFailure) return TimerOperationResult.Fail(MapError(r.Error));
+    Audit(state, userId, "AdjustTime", $"{{\"deltaSec\":{deltaSec}}}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 2: Replace `SetExactRemainingAsync`**
+
+```csharp
+public async Task<TimerOperationResult> SetExactRemainingAsync(Guid roomId, int remainingSec, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+    if (state.CurrentItem is null) return TimerOperationResult.Fail(TimerOperationOutcome.NoActiveItem);
+    var r = TimerStateMachine.SetExactRemaining(state, state.CurrentItem, remainingSec, clock.UtcNow);
+    if (r.IsFailure) return TimerOperationResult.Fail(MapError(r.Error));
+    Audit(state, userId, "SetExactRemaining", $"{{\"remainingSec\":{remainingSec}}}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: AdjustTime and SetExactRemaining implementations"
+```
+
+---
+
+## Task 19: Implement `SetMessage`, `StartAuto`, `ExpirePreRoll`
+
+**Files:**
+- Modify: `src/EventStageTimer.Infrastructure/Timer/TimerCommandService.cs`
+
+Spec anchors: §4.5 SetMessage last-write-wins, §4.5 Start auto-select, §6.2 PreRoll → Running.
+
+- [ ] **Step 1: Replace `SetMessageAsync` (unversioned, doesn't bump `Version`)**
+
+```csharp
+public async Task<TimerOperationResult> SetMessageAsync(Guid roomId, string? message, Guid userId, CancellationToken ct)
+{
+    // Direct update bypasses optimistic concurrency on Version. We use ExecuteUpdateAsync to avoid loading the row.
+    var rows = await db.RoomTimerStates
+        .Where(s => s.RoomId == roomId)
+        .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.CurrentMessage, _ => message), ct);
+    if (rows == 0) return TimerOperationResult.Fail(TimerOperationOutcome.NotFound);
+
+    var state = await db.RoomTimerStates.AsNoTracking().FirstAsync(s => s.RoomId == roomId, ct);
+    db.AuditLog.Add(new AuditLogEntry
+    {
+        Id = Guid.NewGuid(),
+        TenantId = state.TenantId,
+        RoomId = roomId,
+        UserId = userId,
+        Action = string.IsNullOrEmpty(message) ? "ClearMessage" : "SetMessage",
+        DetailsJson = message is null ? "{}" : $"{{\"length\":{message.Length}}}",
+        AtUtc = clock.UtcNow,
+    });
+    await db.SaveChangesAsync(ct);
+    var snapshot = await GetSnapshotAsync(roomId, ct);
+    return TimerOperationResult.Ok(snapshot!);
+}
+```
+
+> Using `ExecuteUpdateAsync` writes the column without loading the row, so SQL Server doesn't bump `Version` (rowversion only changes when EF emits `UPDATE` against tracked entities). This implements the spec rule that messages don't invalidate concurrent state commands.
+
+- [ ] **Step 2: Implement `StartAutoAsync` (operator auto-select)**
+
+```csharp
+public async Task<TimerOperationResult> StartAutoAsync(Guid roomId, long expectedVersion, Guid userId, CancellationToken ct)
+{
+    var (state, fail) = await LoadForCommandAsync(roomId, expectedVersion, ct);
+    if (state is null) return TimerOperationResult.Fail(fail!.Value);
+
+    // Pick the next item with no closed run; if all items have closed runs, pick the lowest-Position one without an open run.
+    var now = clock.UtcNow;
+    var candidate = await db.ScheduleItems
+        .Where(s => s.RoomId == roomId
+                    && !s.Runs.Any(r => r.EndedAtUtc != null)
+                    && s.ScheduledStartUtc >= now.AddMinutes(-30))
+        .OrderBy(s => s.Position)
+        .Select(s => (Guid?)s.Id)
+        .FirstOrDefaultAsync(ct);
+    candidate ??= await db.ScheduleItems
+        .Where(s => s.RoomId == roomId && !s.Runs.Any())
+        .OrderBy(s => s.Position)
+        .Select(s => (Guid?)s.Id)
+        .FirstOrDefaultAsync(ct);
+    if (candidate is null) return TimerOperationResult.Fail(TimerOperationOutcome.NoActiveItem);
+
+    return await StartItemAsync(roomId, candidate.Value, RunTriggerKind.Operator, expectedVersion, userId, ct);
+}
+```
+
+- [ ] **Step 3: Implement `ExpirePreRollAsync` (called by scheduler tick)**
+
+```csharp
+public async Task<TimerOperationResult> ExpirePreRollAsync(Guid roomId, CancellationToken ct)
+{
+    var state = await db.RoomTimerStates.Include(s => s.CurrentItem).FirstOrDefaultAsync(s => s.RoomId == roomId, ct);
+    if (state is null) return TimerOperationResult.Fail(TimerOperationOutcome.NotFound);
+    if (state.Phase != TimerPhase.PreRoll) return TimerOperationResult.Fail(TimerOperationOutcome.InvalidPhase);
+
+    TimerStateMachine.ExpirePreRoll(state, clock.UtcNow);
+    Audit(state, userId: null, "PreRollExpired", "{}");
+    return await PersistAndReturnAsync(state, ct);
+}
+```
+
+- [ ] **Step 4: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: SetMessage (unversioned), StartAuto (auto-select), ExpirePreRoll"
+```
+
+---
