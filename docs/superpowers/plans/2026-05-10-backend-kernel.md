@@ -5374,3 +5374,812 @@ git add . && git commit -m "test: public access code lookup + rate-limit middlew
 ```
 
 ---
+
+## Task 51: Auth tests — magic link + password sign-in
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Auth/MagicLinkAuthTests.cs`
+- Create: `tests/EventStageTimer.Api.Tests/Auth/PasswordAuthTests.cs`
+
+- [ ] **Step 1: Magic link test (no SMTP — `NoOpEmailSender` is active in tests)**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using FluentAssertions;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Auth;
+
+[Collection("sqlserver")]
+public sealed class MagicLinkAuthTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Request_then_consume_signs_in_user_with_tenant_claim()
+    {
+        // Bootstrap a tenant + owner user (password mode), then issue a magic link directly via the service.
+        await AuthHelpers.BootstrapTenantAsync(_http, "owner@test.local", "Strong_Pwd_123");
+
+        using var scope = _factory.Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
+        var token = await svc.IssueAsync("owner@test.local", default);
+
+        var resp = await _http.GetAsync($"/api/auth/magic-link/consume?token={Uri.EscapeDataString(token)}");
+        resp.EnsureSuccessStatusCode();
+        resp.Headers.Should().ContainKey("Set-Cookie");
+
+        // Subsequent authenticated request succeeds
+        var listResp = await _http.GetAsync("/api/events");
+        listResp.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Token_is_single_use_and_expires()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "u@test.local", "Strong_Pwd_123");
+        using var scope = _factory.Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
+        var token = await svc.IssueAsync("u@test.local", default);
+
+        // First consume succeeds
+        (await _http.GetAsync($"/api/auth/magic-link/consume?token={token}")).EnsureSuccessStatusCode();
+
+        // Second consume fails (used)
+        var second = await _http.GetAsync($"/api/auth/magic-link/consume?token={token}");
+        second.StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized);
+
+        // Issue a new token and advance the clock past 15 minutes
+        var freshToken = await svc.IssueAsync("u@test.local", default);
+        _factory.Clock.Advance(TimeSpan.FromMinutes(16));
+        var expired = await _http.GetAsync($"/api/auth/magic-link/consume?token={freshToken}");
+        expired.StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized);
+    }
+}
+```
+
+- [ ] **Step 2: Password auth test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using FluentAssertions;
+using System.Net;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Auth;
+
+[Collection("sqlserver")]
+public sealed class PasswordAuthTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task SignIn_with_correct_credentials_issues_session_cookie()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "owner@test.local", "Strong_Pwd_123");
+        var resp = await _http.PostAsJsonAsync("/api/auth/password/signin", new { Email = "owner@test.local", Password = "Strong_Pwd_123" });
+        resp.EnsureSuccessStatusCode();
+        resp.Headers.Should().ContainKey("Set-Cookie");
+    }
+
+    [Fact]
+    public async Task SignIn_with_wrong_password_returns_401()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "owner@test.local", "Strong_Pwd_123");
+        var resp = await _http.PostAsJsonAsync("/api/auth/password/signin", new { Email = "owner@test.local", Password = "Wrong_Pwd_123" });
+        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task SignOut_clears_session()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "o@test.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "o@test.local", "Strong_Pwd_123");
+        (await _http.GetAsync("/api/events")).EnsureSuccessStatusCode();
+
+        (await _http.PostAsync("/api/auth/password/signout", null)).EnsureSuccessStatusCode();
+        var afterSignOut = await _http.GetAsync("/api/events");
+        afterSignOut.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+}
+```
+
+- [ ] **Step 3: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~Auth.
+git add . && git commit -m "test: magic-link single-use + expiry; password sign-in/sign-out"
+```
+
+---
+
+## Task 52: Authorization policy tests — `EventAdmin` and `RoomOperator` scoping
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Auth/PolicyTests.cs`
+
+- [ ] **Step 1: Write the policy tests**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Auth;
+
+[Collection("sqlserver")]
+public sealed class PolicyTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Viewer_cannot_create_room_in_event_they_only_view()
+    {
+        // Create owner, event, and room
+        var (tenantId, ownerId) = await AuthHelpers.BootstrapTenantAsync(_http, "owner@t.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "owner@t.local", "Strong_Pwd_123");
+        var ev = await _http.PostAsJsonAsync("/api/events", new { Name = "E", TimeZone = "UTC", StartsAtUtc = DateTime.UtcNow, EndsAtUtc = DateTime.UtcNow.AddHours(1) });
+        var eventId = (await ev.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+
+        // Create a Viewer user directly in DB and add membership
+        Guid viewerId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<User>>();
+            var v = new User { Id = Guid.NewGuid(), Email = "viewer@t.local", UserName = "viewer@t.local", DisplayName = "Viewer", CreatedAtUtc = DateTime.UtcNow };
+            (await users.CreateAsync(v, "Strong_Pwd_123")).Succeeded.Should().BeTrue();
+            viewerId = v.Id;
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.EventMemberships.Add(new EventMembership
+            {
+                Id = Guid.NewGuid(), TenantId = tenantId, EventId = eventId,
+                UserId = viewerId, Role = EventRole.Viewer, CreatedAtUtc = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Sign out owner, sign in viewer
+        (await _http.PostAsync("/api/auth/password/signout", null)).EnsureSuccessStatusCode();
+        await AuthHelpers.SignInAsync(_http, "viewer@t.local", "Strong_Pwd_123");
+
+        // Viewer can list rooms (Viewer policy) but cannot create
+        var listResp = await _http.GetAsync($"/api/events/{eventId}/rooms");
+        listResp.EnsureSuccessStatusCode();
+
+        var createResp = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "X" });
+        createResp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+}
+```
+
+- [ ] **Step 2: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~PolicyTests
+git add . && git commit -m "test: policies — Viewer can read but not mutate"
+```
+
+---
+
+## Task 53: Tenant isolation test — global query filter prevents cross-tenant reads
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Tenancy/TenantIsolationTests.cs`
+
+- [ ] **Step 1: Write the test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Tenancy;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Tenancy;
+
+[Collection("sqlserver")]
+public sealed class TenantIsolationTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+
+    public Task InitializeAsync() { _factory = new TestApiFactory(sql); return Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Setting_one_tenant_id_hides_events_from_other_tenants()
+    {
+        Guid tenantA, tenantB, eventA, eventB;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            tenantA = Guid.NewGuid(); tenantB = Guid.NewGuid();
+            db.Tenants.AddRange(
+                new Tenant { Id = tenantA, Name = "A", Slug = "a", Mode = TenantMode.SaaS, CreatedAtUtc = DateTime.UtcNow },
+                new Tenant { Id = tenantB, Name = "B", Slug = "b", Mode = TenantMode.SaaS, CreatedAtUtc = DateTime.UtcNow });
+            eventA = Guid.NewGuid(); eventB = Guid.NewGuid();
+            db.Events.AddRange(
+                new Event { Id = eventA, TenantId = tenantA, Name = "EA", TimeZone = "UTC", StartsAtUtc = DateTime.UtcNow, EndsAtUtc = DateTime.UtcNow.AddHours(1), LobbyAccessCode = "AAAA2222", CreatedAtUtc = DateTime.UtcNow },
+                new Event { Id = eventB, TenantId = tenantB, Name = "EB", TimeZone = "UTC", StartsAtUtc = DateTime.UtcNow, EndsAtUtc = DateTime.UtcNow.AddHours(1), LobbyAccessCode = "BBBB2222", CreatedAtUtc = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+
+        // Read with tenant A scope
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var tenantCtx = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+            tenantCtx.Set(tenantA);
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var visible = await db.Events.Select(e => e.Id).ToListAsync();
+            visible.Should().ContainSingle().Which.Should().Be(eventA);
+        }
+
+        // Bypass with IgnoreQueryFilters returns both
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await db.Events.IgnoreQueryFilters().CountAsync()).Should().BeGreaterOrEqualTo(2);
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~TenantIsolationTests
+git add . && git commit -m "test: tenancy global query filter isolates rows by current tenant"
+```
+
+---
+
+## Task 54: Seed data utility for dev/test
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Setup/SeedData.cs`
+- Create: `tests/EventStageTimer.Api.Tests/Seed/SeedDataTests.cs`
+
+- [ ] **Step 1: Implement the seed utility**
+
+Create `src/EventStageTimer.Api/Setup/SeedData.cs`:
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Auth;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace EventStageTimer.Api.Setup;
+
+public static class SeedData
+{
+    public sealed record SeededIds(Guid TenantId, Guid OwnerUserId, Guid EventId, Guid RoomId, Guid ScheduleItemId, string RoomAccessCode, string LobbyAccessCode);
+
+    public static async Task<SeededIds> CreateMinimalAsync(IServiceProvider services, string ownerEmail = "owner@local", string ownerPassword = "Strong_Pwd_123", CancellationToken ct = default)
+    {
+        using var scope = services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<User>>();
+        var clock = scope.ServiceProvider.GetRequiredService<IClock>();
+        var codes = scope.ServiceProvider.GetRequiredService<IAccessCodeGenerator>();
+        var now = clock.UtcNow;
+
+        var tenant = new Tenant { Id = Guid.NewGuid(), Name = "Demo", Slug = "demo", Mode = TenantMode.SelfHost, CreatedAtUtc = now };
+        db.Tenants.Add(tenant);
+
+        var owner = new User { Id = Guid.NewGuid(), Email = ownerEmail, UserName = ownerEmail, DisplayName = "Owner", CreatedAtUtc = now };
+        (await users.CreateAsync(owner, ownerPassword)).Succeeded.Should();
+
+        db.TenantMemberships.Add(new TenantMembership { Id = Guid.NewGuid(), TenantId = tenant.Id, UserId = owner.Id, Role = TenantRole.Owner, CreatedAtUtc = now });
+
+        var lobbyCode = await codes.GenerateUniqueAsync(ct);
+        var ev = new Event
+        {
+            Id = Guid.NewGuid(), TenantId = tenant.Id, Name = "Demo Conference",
+            TimeZone = "Europe/Amsterdam", StartsAtUtc = now, EndsAtUtc = now.AddHours(8),
+            LobbyAccessCode = lobbyCode.Value, CreatedAtUtc = now,
+        };
+        db.Events.Add(ev);
+        db.EventMemberships.Add(new EventMembership { Id = Guid.NewGuid(), TenantId = tenant.Id, EventId = ev.Id, UserId = owner.Id, Role = EventRole.EventAdmin, CreatedAtUtc = now });
+
+        var roomCode = await codes.GenerateUniqueAsync(ct);
+        var room = new Room { Id = Guid.NewGuid(), TenantId = tenant.Id, EventId = ev.Id, Name = "Main Hall", AccessCode = roomCode.Value, DefaultPreRollSec = 30, CreatedAtUtc = now };
+        db.Rooms.Add(room);
+        db.RoomTimerStates.Add(new RoomTimerState { RoomId = room.Id, TenantId = tenant.Id, Phase = TimerPhase.Idle });
+
+        var item = new ScheduleItem
+        {
+            Id = Guid.NewGuid(), TenantId = tenant.Id, RoomId = room.Id, Position = 1,
+            Title = "Keynote", SpeakerName = "Ada Lovelace", ScheduledStartUtc = now.AddMinutes(5),
+            DurationSec = 1800, PreRollSec = 30, AutoStart = false,
+            ThresholdsJson = "[{\"secondsRemaining\":600,\"colorToken\":\"warning\"},{\"secondsRemaining\":120,\"colorToken\":\"danger\"}]",
+            CreatedAtUtc = now,
+        };
+        db.ScheduleItems.Add(item);
+
+        await db.SaveChangesAsync(ct);
+        return new SeededIds(tenant.Id, owner.Id, ev.Id, room.Id, item.Id, roomCode.Value, lobbyCode.Value);
+    }
+}
+
+internal static class IdentityResultExtensions
+{
+    public static void Should(this IdentityResult result)
+    {
+        if (!result.Succeeded) throw new InvalidOperationException(string.Join("; ", result.Errors.Select(e => e.Description)));
+    }
+}
+```
+
+- [ ] **Step 2: Add a `--seed` startup flag for dev**
+
+In `Program.cs`, after `app.Run()` is wired but before it (i.e., `var app = builder.Build();` block), add seed handling:
+
+```csharp
+if (args.Contains("--seed"))
+{
+    var seeded = await EventStageTimer.Api.Setup.SeedData.CreateMinimalAsync(app.Services);
+    Console.WriteLine($"Seeded: tenant={seeded.TenantId} owner={seeded.OwnerUserId} room={seeded.RoomId} accessCode={seeded.RoomAccessCode}");
+    return;
+}
+```
+
+- [ ] **Step 3: Add a smoke test for the seed utility**
+
+```csharp
+using EventStageTimer.Api.Setup;
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Seed;
+
+[Collection("sqlserver")]
+public sealed class SeedDataTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    public Task InitializeAsync() { _factory = new TestApiFactory(sql); return Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task CreateMinimalAsync_produces_runnable_seed_data()
+    {
+        var ids = await SeedData.CreateMinimalAsync(_factory.Services);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.Rooms.IgnoreQueryFilters().AnyAsync(r => r.Id == ids.RoomId)).Should().BeTrue();
+        (await db.RoomTimerStates.IgnoreQueryFilters().AnyAsync(s => s.RoomId == ids.RoomId && s.Phase == TimerPhase.Idle)).Should().BeTrue();
+        (await db.ScheduleItems.IgnoreQueryFilters().AnyAsync(s => s.Id == ids.ScheduleItemId)).Should().BeTrue();
+        ids.RoomAccessCode.Should().HaveLength(8);
+        ids.LobbyAccessCode.Should().HaveLength(8);
+    }
+}
+```
+
+- [ ] **Step 4: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~SeedDataTests
+git add . && git commit -m "feat+test: SeedData.CreateMinimalAsync for dev/tests + --seed CLI flag"
+```
+
+---
+
+## Task 55: Final `Program.cs` review pass + smoke test
+
+**Files:**
+- Modify: `src/EventStageTimer.Api/Program.cs`
+
+This task is the consolidation of all the `Program.cs` edits scattered through the plan into a single coherent file, plus a final smoke test that exercises the full happy path against a real SQL Server.
+
+- [ ] **Step 1: Replace `Program.cs` with the consolidated version**
+
+```csharp
+using EventStageTimer.Api.Auth.Identity;
+using EventStageTimer.Api.Auth.Policies;
+using EventStageTimer.Api.Auth.Public;
+using EventStageTimer.Api.BackgroundServices;
+using EventStageTimer.Api.Hubs;
+using EventStageTimer.Api.Middleware;
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Auth;
+using EventStageTimer.Infrastructure.Email;
+using EventStageTimer.Infrastructure.Persistence;
+using EventStageTimer.Infrastructure.Tenancy;
+using EventStageTimer.Infrastructure.Timer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// MVC + OpenAPI + SignalR
+builder.Services.AddControllers();
+builder.Services.AddOpenApi();
+builder.Services.AddSignalR();
+
+// Database
+builder.Services.AddDbContext<AppDbContext>(opts =>
+    opts.UseSqlServer(
+        builder.Configuration.GetConnectionString("Default")
+            ?? throw new InvalidOperationException("ConnectionStrings:Default is required"),
+        sql => sql.EnableRetryOnFailure(maxRetryCount: 5)));
+
+// Tenancy
+builder.Services.AddScoped<ITenantContext, EventStageTimer.Infrastructure.Tenancy.TenantContext>();
+
+// Identity (cookie + public access code schemes)
+builder.Services.AddAppIdentity(builder.Configuration);
+
+// Domain helpers
+builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddScoped<IAccessCodeGenerator, AccessCodeGenerator>();
+builder.Services.AddScoped<ITimerCommandService, TimerCommandService>();
+builder.Services.AddScoped<EventStageTimer.Api.Audit.IAuditWriter, EventStageTimer.Api.Audit.AuditWriter>();
+
+// Email (auto-pick SMTP if configured)
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+var smtpHost = builder.Configuration["Smtp:Host"];
+if (!string.IsNullOrWhiteSpace(smtpHost))
+    builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+else
+    builder.Services.AddSingleton<IEmailSender, NoOpEmailSender>();
+
+// Auth services
+builder.Services.AddScoped<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
+
+// Authorization policies
+builder.Services.AddScoped<IAuthorizationHandler, EventAccessHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, RoomAccessHandler>();
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("EventAdmin", p => p.AddRequirements(new EventAccessRequirement(EventRole.EventAdmin)))
+    .AddPolicy("EventViewer", p => p.AddRequirements(new EventAccessRequirement(EventRole.Viewer)))
+    .AddPolicy("RoomOperator", p => p.AddRequirements(new RoomAccessRequirement(EventRole.RoomOperator)));
+
+// Rate limit options
+builder.Services.Configure<PublicRateLimitOptions>(builder.Configuration.GetSection("Security:PublicRateLimit"));
+
+// Background services
+builder.Services.AddHostedService<SchedulerService>();
+
+var app = builder.Build();
+
+// Auto-migrate
+var autoMigrate = builder.Configuration.GetValue<bool?>("Database:AutoMigrate") ?? !builder.Environment.IsProduction();
+if (autoMigrate)
+{
+    using var scope = app.Services.CreateScope();
+    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.Migrate();
+}
+
+// Optional one-shot seed mode for dev
+if (args.Contains("--seed"))
+{
+    var seeded = await EventStageTimer.Api.Setup.SeedData.CreateMinimalAsync(app.Services);
+    Console.WriteLine($"Seeded: tenant={seeded.TenantId} owner={seeded.OwnerUserId} room={seeded.RoomId} accessCode={seeded.RoomAccessCode}");
+    return;
+}
+
+// Pipeline order matters
+app.UseMiddleware<PublicRateLimitMiddleware>();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseMiddleware<TenantResolutionMiddleware>();
+
+app.MapControllers();
+app.MapHub<TimerHub>("/hub/timer");
+app.MapOpenApi();
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.Run();
+
+public partial class Program { }
+```
+
+- [ ] **Step 2: Run the full test suite**
+
+```bash
+dotnet test EventStageTimer.sln
+```
+
+Expected: every test passes. (~14 unit tests in Domain.Tests, ~10 integration tests in Api.Tests.)
+
+- [ ] **Step 3: Manual smoke test**
+
+```bash
+docker run -d -p 1433:1433 --name est-test-sql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Your_strong_password_123 mcr.microsoft.com/mssql/server:2022-latest
+sleep 10
+
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/EventStageTimer.Api -- --seed
+```
+
+Expected: console prints `Seeded: tenant=... owner=... room=... accessCode=...`.
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/EventStageTimer.Api -- --urls http://localhost:5050 &
+SERVER_PID=$!
+sleep 3
+curl -sf http://localhost:5050/health
+kill $SERVER_PID
+docker stop est-test-sql && docker rm est-test-sql
+```
+
+Expected: `{"status":"ok"}`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add . && git commit -m "chore: consolidated Program.cs + final smoke test"
+```
+
+---
+
+## Task 56: Cross-cutting documentation — `README.md` and `CLAUDE.md`
+
+**Files:**
+- Create: `README.md`
+- Create: `CLAUDE.md`
+
+- [ ] **Step 1: Top-level README**
+
+```markdown
+# Event Stage Timer
+
+Multi-tenant SaaS-default event stage timer with self-host support. ASP.NET Core 10 + SignalR backend, React 19 + Vite frontend (added in later plans), SQL Server.
+
+## Status
+
+This repository currently contains the **backend kernel** — the server-side foundation including data model, auth, tenancy, the timer state machine, the SignalR hub, the auto-start scheduler, and a comprehensive integration test suite. No UI yet.
+
+See `docs/superpowers/specs/2026-05-10-event-stage-timer-design.md` for the full design.
+
+## Running locally
+
+Prereqs: .NET 10 SDK, Docker.
+
+```
+docker run -d -p 1433:1433 --name est-sql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Your_strong_password_123 mcr.microsoft.com/mssql/server:2022-latest
+dotnet run --project src/EventStageTimer.Api -- --seed   # one-shot seed for an empty DB
+dotnet run --project src/EventStageTimer.Api               # normal run on http://localhost:5050
+```
+
+## Tests
+
+```
+dotnet test
+```
+
+Integration tests use Testcontainers — Docker must be running.
+```
+
+- [ ] **Step 2: `CLAUDE.md` for future agentic sessions in this repo**
+
+```markdown
+# Event Stage Timer — Agent Guide
+
+This repository implements the design at `docs/superpowers/specs/2026-05-10-event-stage-timer-design.md`. Read it before editing.
+
+## Hard constraints
+
+- **Never** bypass the multi-tenant query filter without `IgnoreQueryFilters()` AND a clearly system-scoped reason. Every cross-tenant read must be intentional.
+- **Never** add per-row `RoomTimerState.Version` bumps to message updates — `SetMessage`/`ClearMessage` are last-write-wins by design (spec §4.5, §6.4). The unit test `MessageVersioningTests` enforces this.
+- **Never** set `RoomTimerState.StartedAtUtc = now` when transitioning out of `PreRoll`. Use `PreRollEndsAtUtc`. The 1Hz scheduler tick can fire late (spec §6.2).
+- **Never** start an item without going through `TimerCommandService.StartItemAsync`. The auto-select logic lives only on the operator's `StartAuto` path; the scheduler always passes an explicit `scheduleItemId`.
+
+## Architectural anchors
+
+- `EventStageTimer.Domain` has zero infrastructure dependencies. EF Core, SignalR, ASP.NET — none of those types may appear here.
+- `TimerStateMachine` is pure (no I/O). DB writes happen in `TimerCommandService`. Tests cover the state machine in pure unit tests; the service is covered by integration tests.
+- Public access codes are stored undashed but rendered dashed (`XXXX-XXXX`). Use `AccessCode.From`/`Formatted`.
+
+## Tests
+
+- Run `dotnet test` before claiming any task complete.
+- Domain.Tests must stay deterministic (no I/O). Api.Tests use Testcontainers — Docker required.
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add . && git commit -m "docs: top-level README and CLAUDE.md guardrails for future agentic edits"
+```
+
+---
+
+## Task 57: Plan-end self-check + handoff
+
+**Files:** none — this task is the final review.
+
+- [ ] **Step 1: Run the entire test suite from a clean build**
+
+```bash
+dotnet clean && dotnet build && dotnet test EventStageTimer.sln
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 2: Confirm spec coverage**
+
+Skim each section of `docs/superpowers/specs/2026-05-10-event-stage-timer-design.md`. Every backend requirement should be implemented. UI requirements (control panel, speaker view, audience views) are out of scope for this plan — they live in Plans 2–4.
+
+- [ ] **Step 3: If all green, mark the plan complete by updating the spec's "Open" section**
+
+Edit `docs/superpowers/specs/2026-05-10-event-stage-timer-design.md` § 15:
+
+- Move **product naming** from "Open" to "Decided" if a name has been chosen, else leave it.
+- Move **logo colour-contrast check** to "Deferred" (decided to defer).
+
+```bash
+git add docs/ && git commit -m "docs: spec open-items resolved after Plan 1 completion"
+```
+
+---
+
+## Spec coverage map
+
+| Spec section | Where implemented in this plan |
+|---|---|
+| §1 Purpose | n/a (statement only) |
+| §2 Scope | T2–T57 collectively; UI items deferred to Plans 2–5 |
+| §3 Users & roles | T3, T4, T29, T30, T52 |
+| §4.1 Control panel | UI deferred (Plan 2+) |
+| §4.2 Speaker view | UI deferred (Plan 2) |
+| §4.3 Door view | UI deferred (Plan 3) |
+| §4.4 Lobby view | UI deferred (Plan 3) |
+| §4.5 Live controls | T12, T14–T19, T38–T39 |
+| §4.6 Scheduler | T41 |
+| §5 Data model | T3–T11 |
+| §6.1–6.2 State machine | T7, T12 |
+| §6.3 Threshold selection | T13 |
+| §6.4 Snapshot payload | T13, T14 |
+| §7 SignalR architecture | T36–T40 |
+| §8 Background services | T41, T42; email synchronous T20–T21 |
+| §9 Auth | T23–T28, T51 |
+| §9.2 Authorization | T29–T31, T52 |
+| §10 Branding | UI/config deferred to Plan 4 |
+| §11 Public access codes | T2, T22, T31, T32, T34, T50 |
+| §12 Container & deployment | Plan 5 |
+| §13 Error handling | T20 (sync email), T31 (rate limit), T46 (stale version) |
+| §14 Testing | T43–T54 |
+
+---
+
+## Plan complete
+
+**Plan complete and saved to `docs/superpowers/plans/2026-05-10-backend-kernel.md`. Two execution options:**
+
+**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration.
+
+**2. Inline Execution** — Execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.
+
+**Which approach?**
+
+---
+
+## Self-review addendum (apply during execution)
+
+After writing this plan I found two issues. Apply these inline when you reach the affected tasks.
+
+### Correction 1 — SignalR cookie sharing in tests (affects T44, T45, T46, T47, T48)
+
+The test code in T45–T48 connects to the hub with:
+
+```csharp
+var conn = new HubConnectionBuilder()
+    .WithUrl(hubUri.ToString(), o => o.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler())
+    .Build();
+```
+
+This handler does **not** carry the auth cookie set by `AuthHelpers.SignInAsync`, so authorized hub methods will silently 401. Fix by introducing a `SetCookieRecorder` in `TestApiFactory` and a `BuildAuthenticatedHubConnection` helper in `AuthHelpers`.
+
+**Augment T43 `TestApiFactory.cs` with cookie capture:**
+
+```csharp
+public string? LastSignInCookie { get; set; }
+
+protected override HttpClient CreateDefaultClient(params DelegatingHandler[] handlers)
+{
+    var recorder = new SetCookieRecorder(this);
+    var combined = handlers.Length == 0 ? new DelegatingHandler[] { recorder } : handlers.Concat(new[] { recorder }).ToArray();
+    return base.CreateDefaultClient(combined);
+}
+
+private sealed class SetCookieRecorder(TestApiFactory factory) : DelegatingHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var response = await base.SendAsync(request, ct);
+        if (response.Headers.TryGetValues("Set-Cookie", out var values))
+        {
+            var session = values.FirstOrDefault(v => v.StartsWith("est.session=", StringComparison.OrdinalIgnoreCase));
+            if (session is not null)
+            {
+                var first = session.IndexOf(';');
+                factory.LastSignInCookie = first < 0 ? session : session[..first];
+            }
+        }
+        return response;
+    }
+}
+```
+
+**Augment T44 `AuthHelpers.cs` with the hub-connection helper:**
+
+```csharp
+public static HubConnection BuildAuthenticatedHubConnection(TestApiFactory factory, HttpClient signedInClient, string hubPath = "/hub/timer")
+{
+    var cookie = factory.LastSignInCookie ?? throw new InvalidOperationException("Sign in via SignInAsync first");
+    return new HubConnectionBuilder()
+        .WithUrl(new Uri(signedInClient.BaseAddress!, hubPath).ToString(), o =>
+        {
+            o.HttpMessageHandlerFactory = inner => new CookieAttachingHandler(inner, cookie);
+        })
+        .Build();
+}
+
+public static HubConnection BuildPublicHubConnection(TestApiFactory factory, HttpClient client, string accessCode, string hubPath = "/hub/timer")
+{
+    var url = new Uri(client.BaseAddress!, $"{hubPath}?code={Uri.EscapeDataString(accessCode)}").ToString();
+    return new HubConnectionBuilder()
+        .WithUrl(url, o => o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler())
+        .Build();
+}
+
+private sealed class CookieAttachingHandler(HttpMessageHandler inner, string cookie) : DelegatingHandler(inner)
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        request.Headers.Add("Cookie", cookie);
+        return base.SendAsync(request, ct);
+    }
+}
+```
+
+**In T45–T48, replace the inline `HubConnectionBuilder` with the helper:**
+
+```csharp
+await using var conn = AuthHelpers.BuildAuthenticatedHubConnection(_factory, _http);
+conn.On<Snapshot>("RoomStateChanged", s => lastSnap = s);
+await conn.StartAsync();
+```
+
+### Correction 2 — Dead code in `TimerStateMachine.SetMessage` (affects T12)
+
+`TimerCommandService.SetMessageAsync` (T19) intentionally bypasses the state machine because it uses `ExecuteUpdateAsync` to avoid bumping `Version`. The `TimerStateMachine.SetMessage` static method added in T12 is therefore unused.
+
+**Fix:** delete `TimerStateMachine.SetMessage` from T12's implementation. Drop the method body but keep the documentation comment near `SetMessageAsync` in T19 that explains why message updates bypass the state machine and rowversion mechanism.
+
