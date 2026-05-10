@@ -49,6 +49,10 @@ builder.Services.AddAuthorizationBuilder()
 // Public rate limiting
 builder.Services.Configure<EventStageTimer.Api.Middleware.PublicRateLimitOptions>(builder.Configuration.GetSection("Security:PublicRateLimit"));
 
+// Audit + background services
+builder.Services.AddScoped<EventStageTimer.Api.Audit.IAuditWriter, EventStageTimer.Api.Audit.AuditWriter>();
+builder.Services.AddHostedService<EventStageTimer.Api.BackgroundServices.SchedulerService>();
+
 var app = builder.Build();
 
 // Auto-migrate when configured (default true outside Production)
@@ -67,6 +71,7 @@ app.UseAuthorization();
 app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();
 
 app.MapControllers();
+app.MapHub<EventStageTimer.Api.Hubs.TimerHub>("/hub/timer");
 app.MapOpenApi();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
