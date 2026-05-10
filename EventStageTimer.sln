@@ -1,0 +1,54 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31919.166
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{F2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EventStageTimer.Domain", "src\EventStageTimer.Domain\EventStageTimer.Domain.csproj", "{D1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EventStageTimer.Infrastructure", "src\EventStageTimer.Infrastructure\EventStageTimer.Infrastructure.csproj", "{D2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EventStageTimer.Api", "src\EventStageTimer.Api\EventStageTimer.Api.csproj", "{D3E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EventStageTimer.Domain.Tests", "tests\EventStageTimer.Domain.Tests\EventStageTimer.Domain.Tests.csproj", "{D4E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EventStageTimer.Api.Tests", "tests\EventStageTimer.Api.Tests\EventStageTimer.Api.Tests.csproj", "{D5E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B10}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D3E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B10}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B10}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B10}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B10}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0C} = {F1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0A}
+		{D2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0D} = {F1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0A}
+		{D3E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0E} = {F1E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0A}
+		{D4E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0F} = {F2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0B}
+		{D5E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B10} = {F2E6F0B0-4A0A-4B0A-9B0A-4A0A4B0A9B0B}
+	EndGlobalSection
+EndGlobal
