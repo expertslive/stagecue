@@ -4638,3 +4638,739 @@ git add . && git commit -m "feat: IAuditWriter helper for non-timer audit entrie
 ```
 
 ---
+
+## Task 43: Test fixture — Testcontainers SQL Server + `TestApiFactory`
+
+**Files:**
+- Modify: `tests/EventStageTimer.Api.Tests/EventStageTimer.Api.Tests.csproj`
+- Create: `tests/EventStageTimer.Api.Tests/Fixtures/SqlServerFixture.cs`
+- Create: `tests/EventStageTimer.Api.Tests/Fixtures/TestApiFactory.cs`
+
+- [ ] **Step 1: Add the test packages**
+
+```bash
+dotnet add tests/EventStageTimer.Api.Tests/EventStageTimer.Api.Tests.csproj package Microsoft.AspNetCore.Mvc.Testing
+dotnet add tests/EventStageTimer.Api.Tests/EventStageTimer.Api.Tests.csproj package Microsoft.AspNetCore.SignalR.Client
+dotnet add tests/EventStageTimer.Api.Tests/EventStageTimer.Api.Tests.csproj package Testcontainers.MsSql
+dotnet add tests/EventStageTimer.Api.Tests/EventStageTimer.Api.Tests.csproj package FluentAssertions
+```
+
+- [ ] **Step 2: Create the SQL Server fixture (per-test-collection container)**
+
+Create `tests/EventStageTimer.Api.Tests/Fixtures/SqlServerFixture.cs`:
+
+```csharp
+using Testcontainers.MsSql;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Fixtures;
+
+public sealed class SqlServerFixture : IAsyncLifetime
+{
+    private readonly MsSqlContainer _container = new MsSqlBuilder()
+        .WithImage("mcr.microsoft.com/mssql/server:2022-latest")
+        .WithPassword("Strong_Test_P@ss_123")
+        .Build();
+
+    public string ConnectionString => _container.GetConnectionString();
+
+    public async Task InitializeAsync() => await _container.StartAsync();
+    public async Task DisposeAsync() => await _container.DisposeAsync();
+}
+
+[CollectionDefinition("sqlserver")]
+public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture> { }
+```
+
+- [ ] **Step 3: Create `TestApiFactory` that overrides the connection string and replaces `IClock` with `TestClock`**
+
+Create `tests/EventStageTimer.Api.Tests/Fixtures/TestApiFactory.cs`:
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace EventStageTimer.Api.Tests.Fixtures;
+
+public sealed class TestApiFactory(SqlServerFixture sql) : WebApplicationFactory<Program>
+{
+    public TestClock Clock { get; } = new(new DateTime(2026, 5, 10, 14, 0, 0, DateTimeKind.Utc));
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Testing");
+
+        builder.ConfigureAppConfiguration((_, cfg) =>
+        {
+            cfg.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Default"] = sql.ConnectionString,
+                ["Database:AutoMigrate"] = "true",
+                ["Auth:Mode"] = "Password",
+                ["App:BaseUrl"] = "http://localhost",
+            });
+        });
+
+        builder.ConfigureServices(services =>
+        {
+            // Replace IClock with the deterministic test clock
+            var clockDescriptor = services.Single(s => s.ServiceType == typeof(IClock));
+            services.Remove(clockDescriptor);
+            services.AddSingleton<IClock>(Clock);
+
+            // Reset DB schema once per factory instance
+            using var scope = services.BuildServiceProvider().CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Database.EnsureDeleted();
+            db.Database.Migrate();
+        });
+    }
+}
+```
+
+- [ ] **Step 4: Build (test project might fail until `TestClock` exists — that's T44)**
+
+```bash
+dotnet build tests/EventStageTimer.Api.Tests
+```
+
+If `TestClock` is not yet created, expect the failure at that symbol — fixed in next task.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add . && git commit -m "test: SqlServerFixture (Testcontainers) + TestApiFactory skeleton"
+```
+
+---
+
+## Task 44: `TestClock` and `AuthHelpers`
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Fixtures/TestClock.cs`
+- Create: `tests/EventStageTimer.Api.Tests/Fixtures/AuthHelpers.cs`
+
+- [ ] **Step 1: Implement `TestClock`**
+
+```csharp
+using EventStageTimer.Domain.Common;
+
+namespace EventStageTimer.Api.Tests.Fixtures;
+
+public sealed class TestClock(DateTime initial) : IClock
+{
+    private DateTime _now = DateTime.SpecifyKind(initial, DateTimeKind.Utc);
+    public DateTime UtcNow => _now;
+    public void Advance(TimeSpan delta) => _now = _now.Add(delta);
+    public void Set(DateTime utc) => _now = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+}
+```
+
+- [ ] **Step 2: Implement helpers for cookie sign-in (operator) and access-code URLs (public)**
+
+```csharp
+using System.Net.Http.Json;
+
+namespace EventStageTimer.Api.Tests.Fixtures;
+
+public static class AuthHelpers
+{
+    public sealed record BootstrapResponse(Guid TenantId, Guid UserId);
+    public sealed record SignInBody(string Email, string Password);
+
+    public static async Task<BootstrapResponse> BootstrapTenantAsync(HttpClient http, string ownerEmail, string ownerPassword)
+    {
+        var body = new
+        {
+            TenantName = "Test Tenant",
+            TenantSlug = "test",
+            OwnerEmail = ownerEmail,
+            OwnerPassword = ownerPassword,
+            OwnerDisplayName = "Owner",
+        };
+        var resp = await http.PostAsJsonAsync("/api/setup/initialize", body);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<BootstrapResponse>())!;
+    }
+
+    public static async Task SignInAsync(HttpClient http, string email, string password)
+    {
+        var resp = await http.PostAsJsonAsync("/api/auth/password/signin", new SignInBody(email, password));
+        resp.EnsureSuccessStatusCode();
+    }
+}
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build tests/EventStageTimer.Api.Tests
+git add . && git commit -m "test: TestClock and AuthHelpers (bootstrap + sign-in)"
+```
+
+---
+
+## Task 45: Hub integration test — full session happy path
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Hubs/FullSessionTests.cs`
+
+- [ ] **Step 1: Write the test (Idle → Start → Pause → Resume → Stop)**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Domain.Timer;
+using EventStageTimer.Infrastructure.Persistence;
+using FluentAssertions;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Hubs;
+
+[Collection("sqlserver")]
+public sealed class FullSessionTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync()
+    {
+        _factory = new TestApiFactory(sql);
+        _http = _factory.CreateClient();
+        await Task.CompletedTask;
+    }
+
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Operator_runs_full_session_against_seeded_room()
+    {
+        // 1. Seed: bootstrap, sign in, create event + room + schedule item
+        var (tenantId, userId) = await AuthHelpers.BootstrapTenantAsync(_http, "owner@test.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "owner@test.local", "Strong_Pwd_123");
+
+        var ev = await _http.PostAsJsonAsync("/api/events", new
+        {
+            Name = "Test Event", TimeZone = "UTC",
+            StartsAtUtc = _factory.Clock.UtcNow,
+            EndsAtUtc = _factory.Clock.UtcNow.AddHours(8),
+        });
+        ev.EnsureSuccessStatusCode();
+        var eventDoc = (await ev.Content.ReadFromJsonAsync<dynamic>())!;
+        Guid eventId = eventDoc.GetProperty("id").GetGuid();
+
+        var room = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "Main Hall" });
+        room.EnsureSuccessStatusCode();
+        var roomDoc = (await room.Content.ReadFromJsonAsync<dynamic>())!;
+        Guid roomId = roomDoc.GetProperty("id").GetGuid();
+
+        var item = await _http.PostAsJsonAsync($"/api/rooms/{roomId}/schedule", new
+        {
+            Title = "Keynote", SpeakerName = "Ada Lovelace",
+            ScheduledStartUtc = _factory.Clock.UtcNow,
+            DurationSec = 300, PreRollSec = 0, AutoStart = false,
+        });
+        item.EnsureSuccessStatusCode();
+        var itemDoc = (await item.Content.ReadFromJsonAsync<dynamic>())!;
+        Guid itemId = itemDoc.GetProperty("id").GetGuid();
+
+        // 2. Connect to the hub as operator (cookie auth attaches via the test handler)
+        var hubUri = new Uri(_http.BaseAddress!, "/hub/timer");
+        await using var conn = new HubConnectionBuilder()
+            .WithUrl(hubUri.ToString(), options =>
+            {
+                options.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler();
+                options.Cookies = new System.Net.CookieContainer();
+                // Re-attach the cookie from _http
+                foreach (var c in _factory.Server.BaseAddress is null ? [] : new[] { _http.DefaultRequestHeaders })
+                {
+                    // (Cookie attached automatically through CreateHandler — left as a placeholder.)
+                }
+            })
+            .Build();
+
+        Snapshot? lastSnap = null;
+        conn.On<Snapshot>("RoomStateChanged", s => lastSnap = s);
+        await conn.StartAsync();
+
+        // Wait for initial empty snapshot via Resync
+        var snap = await conn.InvokeAsync<Snapshot?>("Resync", roomId);
+        snap.Should().NotBeNull();
+        snap!.Phase.Should().Be(TimerPhase.Idle);
+
+        // 3. Start
+        snap = await conn.InvokeAsync<Snapshot>("StartItem", roomId, itemId, snap.Version);
+        snap.Phase.Should().Be(TimerPhase.Running);
+        snap.StartedAtUtc.Should().NotBeNull();
+
+        // 4. Pause + Resume
+        _factory.Clock.Advance(TimeSpan.FromSeconds(60));
+        snap = await conn.InvokeAsync<Snapshot>("Pause", roomId, snap.Version);
+        snap.Phase.Should().Be(TimerPhase.Paused);
+
+        _factory.Clock.Advance(TimeSpan.FromSeconds(15));
+        snap = await conn.InvokeAsync<Snapshot>("Resume", roomId, snap.Version);
+        snap.Phase.Should().Be(TimerPhase.Running);
+        snap.PausedAccumSec.Should().Be(15);
+
+        // 5. Stop
+        snap = await conn.InvokeAsync<Snapshot>("Stop", roomId, snap.Version);
+        snap.Phase.Should().Be(TimerPhase.Ended);
+
+        // 6. ScheduleItemRun was opened and closed
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var run = await db.ScheduleItemRuns.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.ScheduleItemId == itemId);
+        run.Should().NotBeNull();
+        run!.EndedAtUtc.Should().NotBeNull();
+        run.EndedReason.Should().Be(RunEndedReason.Stop);
+    }
+}
+```
+
+- [ ] **Step 2: Run the test**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~FullSessionTests
+```
+
+Expected: PASS. (First Testcontainers run pulls the SQL image — may take 60-90 seconds.)
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add . && git commit -m "test: full session integration test (Idle → Start → Pause/Resume → Stop)"
+```
+
+---
+
+## Task 46: Hub integration test — stale-version rejection
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Hubs/StaleVersionTests.cs`
+
+- [ ] **Step 1: Write the test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Timer;
+using FluentAssertions;
+using Microsoft.AspNetCore.SignalR.Client;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Hubs;
+
+[Collection("sqlserver")]
+public sealed class StaleVersionTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Hub_rejects_command_with_stale_version()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "owner@test.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "owner@test.local", "Strong_Pwd_123");
+
+        // Create event/room/item (factored out into a shared helper in T56; inline here)
+        var ev = await _http.PostAsJsonAsync("/api/events", new { Name = "E", TimeZone = "UTC", StartsAtUtc = _factory.Clock.UtcNow, EndsAtUtc = _factory.Clock.UtcNow.AddHours(1) });
+        var eventId = (await ev.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var room = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "R" });
+        var roomId = (await room.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var item = await _http.PostAsJsonAsync($"/api/rooms/{roomId}/schedule", new { Title = "T", ScheduledStartUtc = _factory.Clock.UtcNow, DurationSec = 60, PreRollSec = 0, AutoStart = false });
+        var itemId = (await item.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+
+        var hubUri = new Uri(_http.BaseAddress!, "/hub/timer");
+        await using var conn = new HubConnectionBuilder()
+            .WithUrl(hubUri.ToString(), o => o.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler())
+            .Build();
+        await conn.StartAsync();
+
+        var snap = await conn.InvokeAsync<Snapshot?>("Resync", roomId);
+        var staleVersion = snap!.Version;
+
+        // First Start succeeds and bumps version
+        await conn.InvokeAsync<Snapshot>("StartItem", roomId, itemId, staleVersion);
+
+        // Second command with the OLD version must throw
+        var act = async () => await conn.InvokeAsync<Snapshot>("Pause", roomId, staleVersion);
+        await act.Should().ThrowAsync<HubException>().WithMessage("*StaleVersion*");
+    }
+}
+```
+
+- [ ] **Step 2: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~StaleVersionTests
+git add . && git commit -m "test: hub rejects state-changing command with stale version"
+```
+
+---
+
+## Task 47: Hub integration test — `SetMessage` does not bump version
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Hubs/MessageVersioningTests.cs`
+
+- [ ] **Step 1: Write the test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Timer;
+using FluentAssertions;
+using Microsoft.AspNetCore.SignalR.Client;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Hubs;
+
+[Collection("sqlserver")]
+public sealed class MessageVersioningTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task SetMessage_does_not_bump_version_so_subsequent_state_command_with_same_version_succeeds()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "o@t.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "o@t.local", "Strong_Pwd_123");
+        var ev = await _http.PostAsJsonAsync("/api/events", new { Name = "E", TimeZone = "UTC", StartsAtUtc = _factory.Clock.UtcNow, EndsAtUtc = _factory.Clock.UtcNow.AddHours(1) });
+        var eventId = (await ev.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var room = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "R" });
+        var roomId = (await room.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var item = await _http.PostAsJsonAsync($"/api/rooms/{roomId}/schedule", new { Title = "T", ScheduledStartUtc = _factory.Clock.UtcNow, DurationSec = 60, PreRollSec = 0, AutoStart = false });
+        var itemId = (await item.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+
+        var hubUri = new Uri(_http.BaseAddress!, "/hub/timer");
+        await using var conn = new HubConnectionBuilder()
+            .WithUrl(hubUri.ToString(), o => o.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler()).Build();
+        await conn.StartAsync();
+
+        var snap = await conn.InvokeAsync<Snapshot?>("Resync", roomId);
+        snap = await conn.InvokeAsync<Snapshot>("StartItem", roomId, itemId, snap!.Version);
+        var versionAtStart = snap.Version;
+
+        // Push messages — version must NOT change
+        snap = await conn.InvokeAsync<Snapshot>("SetMessage", roomId, "Wrap up");
+        snap.Version.Should().Be(versionAtStart);
+        snap = await conn.InvokeAsync<Snapshot>("SetMessage", roomId, "5 min over");
+        snap.Version.Should().Be(versionAtStart);
+
+        // Stale-by-design? No — Pause with the version we already had still succeeds because messages didn't bump it.
+        snap = await conn.InvokeAsync<Snapshot>("Pause", roomId, versionAtStart);
+        snap.Phase.Should().Be(EventStageTimer.Domain.Entities.TimerPhase.Paused);
+        snap.Version.Should().NotBe(versionAtStart); // Pause DID bump
+    }
+}
+```
+
+- [ ] **Step 2: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~MessageVersioningTests
+git add . && git commit -m "test: SetMessage is unversioned and doesn't invalidate concurrent state commands"
+```
+
+---
+
+## Task 48: Hub integration test — `SkipNext` is atomic
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Hubs/SkipNextAtomicityTests.cs`
+
+- [ ] **Step 1: Write the test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Domain.Timer;
+using EventStageTimer.Infrastructure.Persistence;
+using FluentAssertions;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Hubs;
+
+[Collection("sqlserver")]
+public sealed class SkipNextAtomicityTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task SkipNext_closes_current_run_with_SkipReplaced_and_starts_next_item()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "o@t.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "o@t.local", "Strong_Pwd_123");
+        var ev = await _http.PostAsJsonAsync("/api/events", new { Name = "E", TimeZone = "UTC", StartsAtUtc = _factory.Clock.UtcNow, EndsAtUtc = _factory.Clock.UtcNow.AddHours(1) });
+        var eventId = (await ev.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var room = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "R" });
+        var roomId = (await room.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var i1 = await _http.PostAsJsonAsync($"/api/rooms/{roomId}/schedule", new { Title = "First", ScheduledStartUtc = _factory.Clock.UtcNow, DurationSec = 60, PreRollSec = 0, AutoStart = false });
+        var i2 = await _http.PostAsJsonAsync($"/api/rooms/{roomId}/schedule", new { Title = "Second", ScheduledStartUtc = _factory.Clock.UtcNow.AddMinutes(2), DurationSec = 60, PreRollSec = 0, AutoStart = false });
+        var firstId = (await i1.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var secondId = (await i2.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+
+        var hubUri = new Uri(_http.BaseAddress!, "/hub/timer");
+        await using var conn = new HubConnectionBuilder().WithUrl(hubUri.ToString(), o => o.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler()).Build();
+        await conn.StartAsync();
+
+        var snap = await conn.InvokeAsync<Snapshot?>("Resync", roomId);
+        snap = await conn.InvokeAsync<Snapshot>("StartItem", roomId, firstId, snap!.Version);
+        snap = await conn.InvokeAsync<Snapshot>("SkipNext", roomId, snap.Version);
+
+        snap.Phase.Should().Be(TimerPhase.Running);
+        snap.CurrentItem!.Id.Should().Be(secondId);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var firstRun = await db.ScheduleItemRuns.IgnoreQueryFilters().FirstAsync(r => r.ScheduleItemId == firstId);
+        firstRun.EndedReason.Should().Be(RunEndedReason.SkipReplaced);
+        firstRun.EndedAtUtc.Should().NotBeNull();
+
+        var secondRun = await db.ScheduleItemRuns.IgnoreQueryFilters().FirstAsync(r => r.ScheduleItemId == secondId);
+        secondRun.Trigger.Should().Be(RunTrigger.Skip);
+        secondRun.EndedAtUtc.Should().BeNull();
+    }
+}
+```
+
+- [ ] **Step 2: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~SkipNextAtomicityTests
+git add . && git commit -m "test: SkipNext atomically closes current run + starts next"
+```
+
+---
+
+## Task 49: Background test — `SchedulerService` auto-start
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Background/SchedulerServiceTests.cs`
+
+- [ ] **Step 1: Write the test (clock-driven, deterministic)**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Background;
+
+[Collection("sqlserver")]
+public sealed class SchedulerServiceTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task AutoStart_fires_at_scheduled_time_minus_preroll()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "o@t.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "o@t.local", "Strong_Pwd_123");
+        var ev = await _http.PostAsJsonAsync("/api/events", new { Name = "E", TimeZone = "UTC", StartsAtUtc = _factory.Clock.UtcNow, EndsAtUtc = _factory.Clock.UtcNow.AddHours(1) });
+        var eventId = (await ev.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var room = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "R" });
+        var roomId = (await room.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        // Item scheduled 30s in the future, with 10s pre-roll, AutoStart=true
+        var scheduled = _factory.Clock.UtcNow.AddSeconds(30);
+        var i = await _http.PostAsJsonAsync($"/api/rooms/{roomId}/schedule", new { Title = "Auto", ScheduledStartUtc = scheduled, DurationSec = 60, PreRollSec = 10, AutoStart = true });
+        var itemId = (await i.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+
+        // Advance clock past (Scheduled - PreRoll) — i.e. 21 seconds
+        _factory.Clock.Advance(TimeSpan.FromSeconds(21));
+
+        // Wait one scheduler tick + a margin. The hosted service runs in-process.
+        await WaitForPhaseAsync(roomId, TimerPhase.PreRoll, TimeSpan.FromSeconds(5));
+
+        // Advance past pre-roll
+        _factory.Clock.Advance(TimeSpan.FromSeconds(11));
+        await WaitForPhaseAsync(roomId, TimerPhase.Running, TimeSpan.FromSeconds(5));
+    }
+
+    private async Task WaitForPhaseAsync(Guid roomId, TimerPhase expected, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var phase = await db.RoomTimerStates.IgnoreQueryFilters().Where(s => s.RoomId == roomId).Select(s => s.Phase).FirstAsync();
+            if (phase == expected) return;
+            await Task.Delay(200);
+        }
+        throw new TimeoutException($"Room {roomId} did not reach {expected} within {timeout}");
+    }
+}
+```
+
+- [ ] **Step 2: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~SchedulerServiceTests
+git add . && git commit -m "test: SchedulerService auto-starts at ScheduledStart - PreRollSec, transitions to Running on expiry"
+```
+
+---
+
+## Task 50: Public lookup — rate-limit + access-code tests
+
+**Files:**
+- Create: `tests/EventStageTimer.Api.Tests/Public/RateLimitTests.cs`
+- Create: `tests/EventStageTimer.Api.Tests/Public/AccessCodeLookupTests.cs`
+
+- [ ] **Step 1: Add a public branding endpoint to test against**
+
+> The full branding endpoint is built in Plan 4. For now, add a minimal `/r/{code}/ping` test endpoint that returns 200 if the access code resolves. Create `src/EventStageTimer.Api/Controllers/PublicTestPingController.cs` (this controller will be deleted in Plan 4 when proper public endpoints arrive):
+
+```csharp
+using EventStageTimer.Api.Auth.Public;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace EventStageTimer.Api.Controllers;
+
+[ApiController]
+[Authorize(AuthenticationSchemes = PublicAccessCodeAuthHandler.SchemeName)]
+[Route("r/{code}")]
+public sealed class PublicTestPingController(PublicAccessContext ctx) : ControllerBase
+{
+    [HttpGet("ping")]
+    public IActionResult Ping() => Ok(new { roomId = ctx.RoomId, eventId = ctx.EventId });
+}
+```
+
+- [ ] **Step 2: Write the rate-limit test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using FluentAssertions;
+using System.Net;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Public;
+
+[Collection("sqlserver")]
+public sealed class RateLimitTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync()
+    {
+        _factory = new TestApiFactory(sql);
+        _http = _factory.CreateClient();
+        await Task.CompletedTask;
+    }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Public_lookup_returns_429_after_burst_exhausted()
+    {
+        // Burst = 30. Fire 60 requests to a non-existent code; first ~30 get 401, then 429.
+        var unauthorized = 0;
+        var rateLimited = 0;
+        for (var i = 0; i < 60; i++)
+        {
+            var resp = await _http.GetAsync("/r/AAAA-AAAA/ping");
+            if (resp.StatusCode == HttpStatusCode.Unauthorized) unauthorized++;
+            else if (resp.StatusCode == (HttpStatusCode)429) rateLimited++;
+        }
+        rateLimited.Should().BeGreaterThan(0, "rate limiter should kick in once burst is consumed");
+        unauthorized.Should().BeLessOrEqualTo(31); // burst + 1 refill
+    }
+}
+```
+
+- [ ] **Step 3: Write the access-code lookup test**
+
+```csharp
+using EventStageTimer.Api.Tests.Fixtures;
+using FluentAssertions;
+using System.Net.Http.Json;
+using Xunit;
+
+namespace EventStageTimer.Api.Tests.Public;
+
+[Collection("sqlserver")]
+public sealed class AccessCodeLookupTests(SqlServerFixture sql) : IAsyncLifetime
+{
+    private TestApiFactory _factory = null!;
+    private HttpClient _http = null!;
+
+    public async Task InitializeAsync() { _factory = new TestApiFactory(sql); _http = _factory.CreateClient(); await Task.CompletedTask; }
+    public Task DisposeAsync() { _factory.Dispose(); return Task.CompletedTask; }
+
+    [Fact]
+    public async Task Valid_room_access_code_resolves_room_and_event()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "o@t.local", "Strong_Pwd_123");
+        await AuthHelpers.SignInAsync(_http, "o@t.local", "Strong_Pwd_123");
+        var ev = await _http.PostAsJsonAsync("/api/events", new { Name = "E", TimeZone = "UTC", StartsAtUtc = DateTime.UtcNow, EndsAtUtc = DateTime.UtcNow.AddHours(1) });
+        var eventId = (await ev.Content.ReadFromJsonAsync<dynamic>())!.GetProperty("id").GetGuid();
+        var room = await _http.PostAsJsonAsync($"/api/events/{eventId}/rooms", new { Name = "R" });
+        var roomDoc = (await room.Content.ReadFromJsonAsync<dynamic>())!;
+        var code = roomDoc.GetProperty("accessCode").GetString()!;
+        var roomId = roomDoc.GetProperty("id").GetGuid();
+
+        // New client (no auth cookie) — public lookup only
+        var pub = _factory.CreateClient();
+        var resp = await pub.GetAsync($"/r/{code[..4]}-{code[4..]}/ping");
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadFromJsonAsync<dynamic>();
+        body!.GetProperty("roomId").GetGuid().Should().Be(roomId);
+        body.GetProperty("eventId").GetGuid().Should().Be(eventId);
+    }
+
+    [Fact]
+    public async Task Unknown_access_code_returns_401()
+    {
+        var pub = _factory.CreateClient();
+        var resp = await pub.GetAsync("/r/AAAA-AAAA/ping");
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized);
+    }
+}
+```
+
+- [ ] **Step 4: Run + commit**
+
+```bash
+dotnet test tests/EventStageTimer.Api.Tests --filter FullyQualifiedName~Public.
+git add . && git commit -m "test: public access code lookup + rate-limit middleware behaviour"
+```
+
+---
