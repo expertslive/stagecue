@@ -1,3 +1,4 @@
+using EventStageTimer.Api.Auth.Identity;
 using EventStageTimer.Infrastructure.Persistence;
 using EventStageTimer.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
@@ -24,12 +25,18 @@ if (!string.IsNullOrWhiteSpace(smtpHost))
 else
     builder.Services.AddSingleton<EventStageTimer.Infrastructure.Email.IEmailSender, EventStageTimer.Infrastructure.Email.NoOpEmailSender>();
 
+// MagicLink service
+builder.Services.AddScoped<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
+
 // Database
 builder.Services.AddDbContext<AppDbContext>(opts =>
     opts.UseSqlServer(
         builder.Configuration.GetConnectionString("Default")
             ?? throw new InvalidOperationException("ConnectionStrings:Default is required"),
         sql => sql.EnableRetryOnFailure(maxRetryCount: 5)));
+
+// ASP.NET Core Identity
+builder.Services.AddAppIdentity(builder.Configuration);
 
 var app = builder.Build();
 
