@@ -5,6 +5,7 @@ import MessageOverlay from "@/components/timer/MessageOverlay";
 import SessionHeader from "@/components/timer/SessionHeader";
 import SessionFooter from "@/components/timer/SessionFooter";
 import { useTimerHub } from "@/hub/useTimerHub";
+import { publicInfo } from "@/api/publicInfo";
 
 export default function SpeakerView() {
   const { accessCode } = useParams<{ accessCode: string }>();
@@ -14,13 +15,9 @@ export default function SpeakerView() {
 
   useEffect(() => {
     if (!accessCode) return;
-    fetch(`/r/${accessCode}/ping`, { credentials: "include" })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(r.status === 401 ? "URL not valid" : `Lookup failed (${r.status})`);
-        const body = await r.json();
-        setRoomId(body.roomId);
-      })
-      .catch((e) => setResolveError(String(e.message ?? e)));
+    publicInfo.room(accessCode)
+      .then((info) => setRoomId(info.roomId))
+      .catch((e) => setResolveError(String((e as Error).message ?? e)));
   }, [accessCode]);
 
   const { snapshot, skewMs, ready, error } = useTimerHub(roomId, normalisedCode);

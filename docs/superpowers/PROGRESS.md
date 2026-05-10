@@ -8,7 +8,7 @@
 |---|---|---|
 | 1 | `2026-05-10-backend-kernel.md` | ✅ Complete — 43/43 tests pass |
 | 2 | `2026-05-10-speaker-and-control.md` | ✅ Complete — 7/7 web unit tests, smoke verified |
-| 3 | Schedule editor + door + lobby views | Not started |
+| 3 | `2026-05-10-schedule-and-audience-views.md` | ✅ Complete — schedule editor (drag-drop), door view, lobby view, message templates, /info endpoints |
 | 4 | Branding + members + invitations + audit | Not started |
 | 5 | Container packaging + Azure deployment | Not started |
 
