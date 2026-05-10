@@ -14,6 +14,15 @@ builder.Services.AddScoped<ITenantContext, TenantContext>();
 // Domain services
 builder.Services.AddSingleton<EventStageTimer.Domain.Common.IClock, EventStageTimer.Domain.Common.SystemClock>();
 builder.Services.AddScoped<EventStageTimer.Infrastructure.Timer.ITimerCommandService, EventStageTimer.Infrastructure.Timer.TimerCommandService>();
+builder.Services.AddScoped<EventStageTimer.Infrastructure.Auth.IAccessCodeGenerator, EventStageTimer.Infrastructure.Auth.AccessCodeGenerator>();
+
+// Email — SMTP if configured, otherwise NoOp
+builder.Services.Configure<EventStageTimer.Infrastructure.Email.SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+var smtpHost = builder.Configuration["Smtp:Host"];
+if (!string.IsNullOrWhiteSpace(smtpHost))
+    builder.Services.AddSingleton<EventStageTimer.Infrastructure.Email.IEmailSender, EventStageTimer.Infrastructure.Email.SmtpEmailSender>();
+else
+    builder.Services.AddSingleton<EventStageTimer.Infrastructure.Email.IEmailSender, EventStageTimer.Infrastructure.Email.NoOpEmailSender>();
 
 // Database
 builder.Services.AddDbContext<AppDbContext>(opts =>
