@@ -9,7 +9,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddSignalR();
 
 // Tenancy
-builder.Services.AddScoped<ITenantContext, NullTenantContext>();
+builder.Services.AddScoped<ITenantContext, TenantContext>();
 
 // Database
 builder.Services.AddDbContext<AppDbContext>(opts =>
@@ -29,6 +29,10 @@ if (autoMigrate)
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
+
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();
 
 app.MapControllers();
 app.MapOpenApi();
