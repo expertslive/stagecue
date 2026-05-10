@@ -2643,3 +2643,740 @@ git add . && git commit -m "feat: SetMessage (unversioned), StartAuto (auto-sele
 ```
 
 ---
+
+## Task 20: `IEmailSender` abstraction + `NoOpEmailSender`
+
+**Files:**
+- Create: `src/EventStageTimer.Infrastructure/Email/IEmailSender.cs`
+- Create: `src/EventStageTimer.Infrastructure/Email/NoOpEmailSender.cs`
+
+Spec anchor: §8 synchronous email; §13 error handling.
+
+- [ ] **Step 1: Define the interface and exception type**
+
+Create `src/EventStageTimer.Infrastructure/Email/IEmailSender.cs`:
+
+```csharp
+namespace EventStageTimer.Infrastructure.Email;
+
+public interface IEmailSender
+{
+    Task SendAsync(EmailMessage message, CancellationToken ct);
+}
+
+public sealed record EmailMessage(string To, string Subject, string BodyHtml, string BodyText);
+
+public sealed class EmailSendException(string message, Exception? inner = null) : Exception(message, inner);
+```
+
+- [ ] **Step 2: Add a no-op implementation for tests and SMTP-less local mode**
+
+Create `src/EventStageTimer.Infrastructure/Email/NoOpEmailSender.cs`:
+
+```csharp
+using Microsoft.Extensions.Logging;
+
+namespace EventStageTimer.Infrastructure.Email;
+
+public sealed class NoOpEmailSender(ILogger<NoOpEmailSender> log) : IEmailSender
+{
+    public Task SendAsync(EmailMessage message, CancellationToken ct)
+    {
+        log.LogInformation("[NoOpEmail] To={To} Subject={Subject}", message.To, message.Subject);
+        return Task.CompletedTask;
+    }
+}
+```
+
+- [ ] **Step 3: Wire DI in `Program.cs` (default to no-op until SMTP is configured in T21)**
+
+Add to `Program.cs`:
+
+```csharp
+builder.Services.AddSingleton<EventStageTimer.Infrastructure.Email.IEmailSender, EventStageTimer.Infrastructure.Email.NoOpEmailSender>();
+```
+
+- [ ] **Step 4: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: IEmailSender abstraction + NoOpEmailSender"
+```
+
+---
+
+## Task 21: `SmtpEmailSender` via MailKit
+
+**Files:**
+- Create: `src/EventStageTimer.Infrastructure/Email/SmtpEmailSender.cs`
+- Create: `src/EventStageTimer.Infrastructure/Email/SmtpOptions.cs`
+- Modify: `src/EventStageTimer.Api/Program.cs`
+- Modify: `src/EventStageTimer.Api/appsettings.json`
+
+- [ ] **Step 1: Add the MailKit package to Infrastructure**
+
+```bash
+dotnet add src/EventStageTimer.Infrastructure/EventStageTimer.Infrastructure.csproj package MailKit
+```
+
+- [ ] **Step 2: Define options bound from `Smtp:*` config**
+
+Create `src/EventStageTimer.Infrastructure/Email/SmtpOptions.cs`:
+
+```csharp
+namespace EventStageTimer.Infrastructure.Email;
+
+public sealed class SmtpOptions
+{
+    public string Host { get; set; } = "";
+    public int Port { get; set; } = 587;
+    public bool UseStartTls { get; set; } = true;
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
+    public string FromAddress { get; set; } = "noreply@example.com";
+    public string FromName { get; set; } = "Event Stage Timer";
+    public int TimeoutMs { get; set; } = 10_000;
+}
+```
+
+- [ ] **Step 3: Implement the sender**
+
+Create `src/EventStageTimer.Infrastructure/Email/SmtpEmailSender.cs`:
+
+```csharp
+using MailKit.Net.Smtp;
+using MailKit.Security;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using MimeKit;
+
+namespace EventStageTimer.Infrastructure.Email;
+
+public sealed class SmtpEmailSender(IOptions<SmtpOptions> options, ILogger<SmtpEmailSender> log) : IEmailSender
+{
+    private readonly SmtpOptions _o = options.Value;
+
+    public async Task SendAsync(EmailMessage message, CancellationToken ct)
+    {
+        var msg = new MimeMessage();
+        msg.From.Add(new MailboxAddress(_o.FromName, _o.FromAddress));
+        msg.To.Add(MailboxAddress.Parse(message.To));
+        msg.Subject = message.Subject;
+        msg.Body = new BodyBuilder { HtmlBody = message.BodyHtml, TextBody = message.BodyText }.ToMessageBody();
+
+        using var smtp = new SmtpClient { Timeout = _o.TimeoutMs };
+        try
+        {
+            var socketOpt = _o.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto;
+            await smtp.ConnectAsync(_o.Host, _o.Port, socketOpt, ct);
+            if (!string.IsNullOrEmpty(_o.Username))
+                await smtp.AuthenticateAsync(_o.Username, _o.Password, ct);
+            await smtp.SendAsync(msg, ct);
+            await smtp.DisconnectAsync(true, ct);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "SMTP send to {To} failed", message.To);
+            throw new EmailSendException("Failed to send email", ex);
+        }
+    }
+}
+```
+
+- [ ] **Step 4: Wire SMTP if configured; otherwise stay on NoOp**
+
+In `Program.cs` replace the `IEmailSender` registration block:
+
+```csharp
+builder.Services.Configure<EventStageTimer.Infrastructure.Email.SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+var smtpHost = builder.Configuration["Smtp:Host"];
+if (!string.IsNullOrWhiteSpace(smtpHost))
+    builder.Services.AddSingleton<EventStageTimer.Infrastructure.Email.IEmailSender, EventStageTimer.Infrastructure.Email.SmtpEmailSender>();
+else
+    builder.Services.AddSingleton<EventStageTimer.Infrastructure.Email.IEmailSender, EventStageTimer.Infrastructure.Email.NoOpEmailSender>();
+```
+
+Add a placeholder `Smtp` section to `appsettings.json`:
+
+```json
+"Smtp": {
+  "Host": "",
+  "Port": 587,
+  "UseStartTls": true,
+  "Username": "",
+  "Password": "",
+  "FromAddress": "noreply@example.com",
+  "FromName": "Event Stage Timer"
+}
+```
+
+- [ ] **Step 5: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: SmtpEmailSender via MailKit, used when Smtp:Host is configured"
+```
+
+---
+
+## Task 22: `AccessCodeGenerator` service
+
+**Files:**
+- Create: `src/EventStageTimer.Infrastructure/Auth/AccessCodeGenerator.cs`
+- Test: `tests/EventStageTimer.Domain.Tests/Common/AccessCodeGeneratorContractTests.cs`
+
+> The `AccessCode` *value type* lives in Domain (T2). The *generator service* that retries on DB collisions lives in Infrastructure since it needs a `DbContext`.
+
+- [ ] **Step 1: Define the generator service**
+
+Create `src/EventStageTimer.Infrastructure/Auth/AccessCodeGenerator.cs`:
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Infrastructure.Auth;
+
+public interface IAccessCodeGenerator
+{
+    Task<AccessCode> GenerateUniqueAsync(CancellationToken ct);
+}
+
+public sealed class AccessCodeGenerator(AppDbContext db) : IAccessCodeGenerator
+{
+    private const int MaxAttempts = 8;
+
+    public async Task<AccessCode> GenerateUniqueAsync(CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
+        {
+            var candidate = AccessCode.Generate();
+            var taken = await db.Rooms.IgnoreQueryFilters().AnyAsync(r => r.AccessCode == candidate.Value, ct)
+                     || await db.Events.IgnoreQueryFilters().AnyAsync(e => e.LobbyAccessCode == candidate.Value, ct);
+            if (!taken) return candidate;
+        }
+        throw new InvalidOperationException($"Could not generate a unique access code after {MaxAttempts} attempts");
+    }
+}
+```
+
+- [ ] **Step 2: Register in DI**
+
+Add to `Program.cs`:
+
+```csharp
+builder.Services.AddScoped<EventStageTimer.Infrastructure.Auth.IAccessCodeGenerator, EventStageTimer.Infrastructure.Auth.AccessCodeGenerator>();
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: AccessCodeGenerator service with DB-collision retry"
+```
+
+---
+
+## Task 23: ASP.NET Core Identity setup
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/Identity/IdentitySetup.cs`
+- Modify: `src/EventStageTimer.Api/Program.cs`
+- Modify: `src/EventStageTimer.Api/appsettings.json`
+
+Spec anchors: §9.1 auth modes, §9.2 cookie issuance.
+
+- [ ] **Step 1: Create the setup helper**
+
+Create `src/EventStageTimer.Api/Auth/Identity/IdentitySetup.cs`:
+
+```csharp
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace EventStageTimer.Api.Auth.Identity;
+
+public static class IdentitySetup
+{
+    public const string SchemeName = CookieAuthenticationDefaults.AuthenticationScheme;
+
+    public static IServiceCollection AddAppIdentity(this IServiceCollection services, IConfiguration config)
+    {
+        services.AddIdentityCore<User>(o =>
+        {
+            o.Password.RequireDigit = true;
+            o.Password.RequireLowercase = true;
+            o.Password.RequireUppercase = false;
+            o.Password.RequireNonAlphanumeric = false;
+            o.Password.RequiredLength = 10;
+            o.User.RequireUniqueEmail = true;
+            o.SignIn.RequireConfirmedEmail = false;
+        })
+        .AddRoles<IdentityRole<Guid>>()
+        .AddEntityFrameworkStores<AppDbContext>()
+        .AddDefaultTokenProviders();
+
+        services.AddAuthentication(SchemeName)
+            .AddCookie(SchemeName, opts =>
+            {
+                opts.Cookie.Name = "est.session";
+                opts.Cookie.HttpOnly = true;
+                opts.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                opts.Cookie.SameSite = SameSiteMode.Lax;
+                opts.ExpireTimeSpan = TimeSpan.FromHours(12);
+                opts.SlidingExpiration = true;
+                opts.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; };
+                opts.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
+            });
+
+        services.AddAuthorization();
+        return services;
+    }
+}
+```
+
+- [ ] **Step 2: Wire into `Program.cs`**
+
+Replace the existing `app.UseAuthentication(); app.UseAuthorization();` lines. Add before `var app = builder.Build();`:
+
+```csharp
+builder.Services.AddAppIdentity(builder.Configuration);
+```
+
+Confirm that the request pipeline contains, in order:
+
+```csharp
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();
+app.MapControllers();
+```
+
+- [ ] **Step 3: Add an `Auth:Mode` config setting**
+
+Update `appsettings.json`:
+
+```json
+"Auth": {
+  "Mode": "Password"   // "MagicLink" or "Password"
+}
+```
+
+- [ ] **Step 4: Generate a follow-up migration if Identity tables changed**
+
+```bash
+dotnet ef migrations add AddIdentity \
+  --project src/EventStageTimer.Infrastructure \
+  --startup-project src/EventStageTimer.Api \
+  --output-dir Persistence/Migrations
+```
+
+If the `Initial` migration already included the Identity tables (it should — `AppDbContext` extends `IdentityDbContext`), this will be a no-op migration; delete the empty migration files in that case.
+
+- [ ] **Step 5: Build + smoke test**
+
+```bash
+dotnet build EventStageTimer.sln
+```
+
+Expected: build succeeds.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add . && git commit -m "feat: ASP.NET Core Identity setup with cookie auth (Lax, HttpOnly, Secure)"
+```
+
+---
+
+## Task 24: `MagicLinkService` — issue + consume tokens
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/MagicLink/MagicLinkService.cs`
+
+Spec anchors: §9.1 MagicLink flow, §13 synchronous email failure UX.
+
+- [ ] **Step 1: Implement the service**
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Email;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+
+namespace EventStageTimer.Api.Auth.MagicLink;
+
+public sealed class MagicLinkService(
+    AppDbContext db,
+    UserManager<User> users,
+    IEmailSender email,
+    IClock clock,
+    IConfiguration config)
+{
+    private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
+
+    public async Task<string> IssueAsync(string emailAddress, CancellationToken ct)
+    {
+        var user = await users.FindByEmailAsync(emailAddress)
+                   ?? throw new InvalidOperationException("Unknown email");
+
+        var bytes = RandomNumberGenerator.GetBytes(32);
+        var token = Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").TrimEnd('=');
+
+        db.AuthMagicLinks.Add(new AuthMagicLink
+        {
+            Token = token,
+            UserId = user.Id,
+            ExpiresAt = clock.UtcNow.Add(Lifetime),
+        });
+        await db.SaveChangesAsync(ct);
+
+        var baseUrl = config["App:BaseUrl"] ?? "https://localhost:5001";
+        var link = $"{baseUrl}/api/auth/magic-link/consume?token={Uri.EscapeDataString(token)}";
+
+        try
+        {
+            await email.SendAsync(new EmailMessage(
+                emailAddress,
+                "Sign in to Event Stage Timer",
+                $"<p>Click to sign in: <a href=\"{link}\">{link}</a></p><p>The link expires in 15 minutes.</p>",
+                $"Sign in: {link}\nExpires in 15 minutes."), ct);
+        }
+        catch (EmailSendException)
+        {
+            // Caller decides how to surface — controller maps to a 502 with a retry message.
+            throw;
+        }
+        return token; // returned for tests; not sent to controllers
+    }
+
+    public async Task<User?> ConsumeAsync(string token, CancellationToken ct)
+    {
+        var link = await db.AuthMagicLinks.Include(l => l.User).FirstOrDefaultAsync(l => l.Token == token, ct);
+        if (link is null) return null;
+        if (link.UsedAt is not null) return null;
+        if (link.ExpiresAt < clock.UtcNow) return null;
+        link.UsedAt = clock.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return link.User;
+    }
+}
+```
+
+- [ ] **Step 2: Register in DI**
+
+```csharp
+builder.Services.AddScoped<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: MagicLinkService — issue (single-use, 15 min) + consume"
+```
+
+---
+
+## Task 25: `MagicLinkController` — request + consume endpoints
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/MagicLink/MagicLinkController.cs`
+
+- [ ] **Step 1: Implement the controller**
+
+```csharp
+using EventStageTimer.Api.Auth.Identity;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Email;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Auth.MagicLink;
+
+[ApiController]
+[Route("api/auth/magic-link")]
+public sealed class MagicLinkController(MagicLinkService svc, UserManager<User> users) : ControllerBase
+{
+    public sealed record RequestBody(string Email);
+
+    [HttpPost("request")]
+    public async Task<IActionResult> Request([FromBody] RequestBody body, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(body.Email)) return BadRequest();
+        if (await users.FindByEmailAsync(body.Email) is null)
+            return Ok(new { sent = true }); // don't leak whether the email is registered
+
+        try { await svc.IssueAsync(body.Email, ct); }
+        catch (EmailSendException) { return StatusCode(502, new { error = "EmailSendFailed" }); }
+
+        return Ok(new { sent = true });
+    }
+
+    [HttpGet("consume")]
+    public async Task<IActionResult> Consume([FromQuery] string token, CancellationToken ct)
+    {
+        var user = await svc.ConsumeAsync(token, ct);
+        if (user is null) return Unauthorized();
+
+        var memberships = users.Users; // get tenant claim from primary tenant (first owner/admin)
+        var primaryTenantId = await users.GetClaimsAsync(user); // placeholder — real lookup in T28
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new(ClaimTypes.Email, user.Email!),
+        };
+        var identity = new ClaimsIdentity(claims, IdentitySetup.SchemeName);
+        await HttpContext.SignInAsync(IdentitySetup.SchemeName, new ClaimsPrincipal(identity));
+        return Ok(new { signedIn = true });
+    }
+}
+```
+
+> Note: the controller does *not* include a `tid` claim yet — that's added in T28 once we have the tenant-membership lookup wired.
+
+- [ ] **Step 2: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: MagicLinkController — request and consume endpoints"
+```
+
+---
+
+## Task 26: `PasswordController` — local mode sign-in
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/Password/PasswordController.cs`
+
+- [ ] **Step 1: Implement the controller**
+
+```csharp
+using EventStageTimer.Api.Auth.Identity;
+using EventStageTimer.Domain.Entities;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Auth.Password;
+
+[ApiController]
+[Route("api/auth/password")]
+public sealed class PasswordController(UserManager<User> users, SignInManager<User> signIn) : ControllerBase
+{
+    public sealed record SignInBody(string Email, string Password);
+
+    [HttpPost("signin")]
+    public async Task<IActionResult> SignIn([FromBody] SignInBody body, CancellationToken ct)
+    {
+        var user = await users.FindByEmailAsync(body.Email);
+        if (user is null) return Unauthorized();
+
+        var ok = await users.CheckPasswordAsync(user, body.Password);
+        if (!ok) return Unauthorized();
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new(ClaimTypes.Email, user.Email!),
+        };
+        var identity = new ClaimsIdentity(claims, IdentitySetup.SchemeName);
+        await HttpContext.SignInAsync(IdentitySetup.SchemeName, new ClaimsPrincipal(identity));
+        return Ok(new { signedIn = true });
+    }
+
+    [HttpPost("signout")]
+    public async Task<IActionResult> SignOutEndpoint()
+    {
+        await HttpContext.SignOutAsync(IdentitySetup.SchemeName);
+        return NoContent();
+    }
+}
+```
+
+- [ ] **Step 2: Wire `SignInManager` (it requires `IHttpContextAccessor`)**
+
+In `IdentitySetup.AddAppIdentity`, after `AddIdentityCore`, append `.AddSignInManager()` and add `services.AddHttpContextAccessor();` above. Final block:
+
+```csharp
+services.AddHttpContextAccessor();
+
+services.AddIdentityCore<User>(o => { /* … */ })
+    .AddRoles<IdentityRole<Guid>>()
+    .AddEntityFrameworkStores<AppDbContext>()
+    .AddDefaultTokenProviders()
+    .AddSignInManager();
+```
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: PasswordController — sign-in/sign-out for local self-host mode"
+```
+
+---
+
+## Task 27: `BootstrapController` — first-run setup for self-host
+
+**Files:**
+- Create: `src/EventStageTimer.Api/Auth/Bootstrap/BootstrapController.cs`
+
+Spec anchor: §9.3 bootstrap.
+
+- [ ] **Step 1: Implement the controller**
+
+```csharp
+using EventStageTimer.Domain.Common;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace EventStageTimer.Api.Auth.Bootstrap;
+
+[ApiController]
+[Route("api/setup")]
+public sealed class BootstrapController(
+    AppDbContext db,
+    UserManager<User> users,
+    IClock clock) : ControllerBase
+{
+    public sealed record SetupBody(string TenantName, string TenantSlug, string OwnerEmail, string OwnerPassword, string OwnerDisplayName);
+
+    [HttpGet("status")]
+    public async Task<IActionResult> Status(CancellationToken ct)
+    {
+        var hasTenant = await db.Tenants.IgnoreQueryFilters().AnyAsync(ct);
+        return Ok(new { initialized = hasTenant });
+    }
+
+    [HttpPost("initialize")]
+    public async Task<IActionResult> Initialize([FromBody] SetupBody body, CancellationToken ct)
+    {
+        if (await db.Tenants.IgnoreQueryFilters().AnyAsync(ct))
+            return Conflict(new { error = "AlreadyInitialized" });
+
+        var tenant = new Tenant
+        {
+            Id = Guid.NewGuid(),
+            Name = body.TenantName,
+            Slug = body.TenantSlug,
+            Mode = TenantMode.SelfHost,
+            CreatedAtUtc = clock.UtcNow,
+        };
+        db.Tenants.Add(tenant);
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            UserName = body.OwnerEmail,
+            Email = body.OwnerEmail,
+            DisplayName = body.OwnerDisplayName,
+            CreatedAtUtc = clock.UtcNow,
+        };
+        var createResult = await users.CreateAsync(user, body.OwnerPassword);
+        if (!createResult.Succeeded) return BadRequest(new { errors = createResult.Errors });
+
+        db.TenantMemberships.Add(new TenantMembership
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenant.Id,
+            UserId = user.Id,
+            Role = TenantRole.Owner,
+            CreatedAtUtc = clock.UtcNow,
+        });
+
+        await db.SaveChangesAsync(ct);
+        return Ok(new { tenantId = tenant.Id, userId = user.Id });
+    }
+}
+```
+
+> The `IgnoreQueryFilters` calls bypass the multi-tenant filter for cross-tenant existence checks (the only place we do this without a system principal).
+
+- [ ] **Step 2: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: BootstrapController — first-run /setup endpoints (status + initialize)"
+```
+
+---
+
+## Task 28: Tenant claim + memberships lookup at sign-in
+
+**Files:**
+- Modify: `src/EventStageTimer.Api/Auth/MagicLink/MagicLinkController.cs`
+- Modify: `src/EventStageTimer.Api/Auth/Password/PasswordController.cs`
+- Create: `src/EventStageTimer.Api/Auth/SignInHelper.cs`
+
+Both controllers should attach the user's **primary tenant** as a `tid` claim so `TenantResolutionMiddleware` can populate `ITenantContext` for authenticated requests.
+
+- [ ] **Step 1: Add a shared sign-in helper**
+
+```csharp
+using EventStageTimer.Api.Auth.Identity;
+using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+
+namespace EventStageTimer.Api.Auth;
+
+public static class SignInHelper
+{
+    public static async Task SignInWithTenantAsync(HttpContext ctx, AppDbContext db, User user, CancellationToken ct)
+    {
+        var primaryTenantId = await db.TenantMemberships
+            .IgnoreQueryFilters()
+            .Where(tm => tm.UserId == user.Id)
+            .OrderBy(tm => tm.Role) // Owner=1 < Admin=2
+            .Select(tm => (Guid?)tm.TenantId)
+            .FirstOrDefaultAsync(ct);
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new(ClaimTypes.Email, user.Email!),
+        };
+        if (primaryTenantId is { } tid) claims.Add(new Claim("tid", tid.ToString()));
+
+        var identity = new ClaimsIdentity(claims, IdentitySetup.SchemeName);
+        await ctx.SignInAsync(IdentitySetup.SchemeName, new ClaimsPrincipal(identity));
+    }
+}
+```
+
+- [ ] **Step 2: Use the helper in both controllers**
+
+Replace the `SignInAsync` calls in `MagicLinkController.Consume` and `PasswordController.SignIn` with:
+
+```csharp
+await SignInHelper.SignInWithTenantAsync(HttpContext, db, user, ct);
+```
+
+(Inject `AppDbContext db` into the constructors.)
+
+- [ ] **Step 3: Build + commit**
+
+```bash
+dotnet build EventStageTimer.sln
+git add . && git commit -m "feat: emit tid claim from primary TenantMembership at sign-in"
+```
+
+---
