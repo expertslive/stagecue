@@ -24,6 +24,49 @@ Sign in with `owner@local` / `Strong_Pwd_123`. Open the seeded room and a speake
 
 `docker compose down -v` resets the database and uploads.
 
+## Run an event from a laptop (offline self-host)
+
+The `docker-compose.yml` is the operator runbook for venue-day:
+
+```bash
+# 1. Configure once per laptop / event
+cp .env.example .env
+# Edit .env: set SA_PASSWORD to something strong and APP_BASE_URL to the
+# laptop's LAN IP so tablets and confidence monitors on the same Wi-Fi can
+# reach it (e.g. http://192.168.0.10:8080).
+
+# 2. Build + start
+docker compose up --build -d
+
+# 3. First time only — bootstrap the tenant + admin user.
+#    Either complete the /setup wizard in the browser, OR seed demo data:
+docker compose run --rm app dotnet EventStageTimer.Api.dll --seed
+# Note the printed access codes — those are what you'll print on QR codes.
+
+# 4. Open the control panel
+open http://localhost:8080      # or http://<your LAN IP>:8080
+
+# 5. Public URLs to hand to confidence monitors / door tablets / lobby screens:
+#    http://<laptop-ip>:8080/r/XXXX-XXXX/speaker        (per room)
+#    http://<laptop-ip>:8080/r/XXXX-XXXX/door           (per room — door display)
+#    http://<laptop-ip>:8080/e/YYYY-YYYY/lobby          (event-wide lobby)
+
+# Stop between sessions (data is preserved on the named volumes):
+docker compose stop
+
+# Wipe everything and start fresh:
+docker compose down -v
+```
+
+Operational notes:
+
+- Uploads (logos) live in the `uploads` Docker volume; SQL data lives in `sqldata`. Both survive `docker compose stop` and `docker compose up`.
+- Auth defaults to **password mode** — SMTP is not required at the venue. (`Auth__Mode: Password` in `docker-compose.yml`.)
+- Storage defaults to **Local** (filesystem inside the container) — no Azure dependency. (`Storage__Mode: Local`.)
+- Scheduler and SignalR hub run in-process — no Redis backplane needed for a single-laptop event.
+- Health probes: `GET /health/live` (process up) and `GET /health/ready` (DB reachable).
+- macOS / Apple Silicon: the SQL Server image is linux/amd64 and runs under emulation; first start takes ~30s.
+
 ## Run locally without Docker (dev workflow)
 
 Prereqs: .NET 10 SDK, Node 22+, Docker (for SQL Server only).
