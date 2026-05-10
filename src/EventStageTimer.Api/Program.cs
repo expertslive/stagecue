@@ -38,6 +38,17 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
 // ASP.NET Core Identity
 builder.Services.AddAppIdentity(builder.Configuration);
 
+// Authorization handlers + named policies
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, EventStageTimer.Api.Auth.Policies.EventAccessHandler>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, EventStageTimer.Api.Auth.Policies.RoomAccessHandler>();
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("EventAdmin", p => p.AddRequirements(new EventStageTimer.Api.Auth.Policies.EventAccessRequirement(EventStageTimer.Domain.Entities.EventRole.EventAdmin)))
+    .AddPolicy("EventViewer", p => p.AddRequirements(new EventStageTimer.Api.Auth.Policies.EventAccessRequirement(EventStageTimer.Domain.Entities.EventRole.Viewer)))
+    .AddPolicy("RoomOperator", p => p.AddRequirements(new EventStageTimer.Api.Auth.Policies.RoomAccessRequirement(EventStageTimer.Domain.Entities.EventRole.RoomOperator)));
+
+// Public rate limiting
+builder.Services.Configure<EventStageTimer.Api.Middleware.PublicRateLimitOptions>(builder.Configuration.GetSection("Security:PublicRateLimit"));
+
 var app = builder.Build();
 
 // Auto-migrate when configured (default true outside Production)
@@ -50,6 +61,7 @@ if (autoMigrate)
     db.Database.Migrate();
 }
 
+app.UseMiddleware<EventStageTimer.Api.Middleware.PublicRateLimitMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<EventStageTimer.Api.Middleware.TenantResolutionMiddleware>();

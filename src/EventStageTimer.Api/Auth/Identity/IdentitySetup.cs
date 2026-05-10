@@ -28,6 +28,8 @@ public static class IdentitySetup
         .AddDefaultTokenProviders()
         .AddSignInManager();
 
+        services.AddScoped<EventStageTimer.Api.Auth.Public.PublicAccessContext>();
+
         services.AddAuthentication(SchemeName)
             .AddCookie(SchemeName, opts =>
             {
@@ -39,7 +41,9 @@ public static class IdentitySetup
                 opts.SlidingExpiration = true;
                 opts.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; };
                 opts.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
-            });
+            })
+            .AddScheme<EventStageTimer.Api.Auth.Public.PublicAccessCodeAuthOptions, EventStageTimer.Api.Auth.Public.PublicAccessCodeAuthHandler>(
+                EventStageTimer.Api.Auth.Public.PublicAccessCodeAuthHandler.SchemeName, _ => { });
 
         services.AddAuthorization();
         return services;
