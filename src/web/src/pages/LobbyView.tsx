@@ -6,11 +6,13 @@ import { TimerHub } from "@/hub/timerHub";
 import type { Snapshot } from "@/api/types";
 import { measureSkew } from "@/lib/clockSkew";
 import RoomCard from "@/components/audience/RoomCard";
+import { useBranding } from "@/hooks/useBranding";
 
 export default function LobbyView() {
   const { accessCode } = useParams<{ accessCode: string }>();
   const normalised = (accessCode ?? "").replace("-", "").toUpperCase();
   const info = useQuery({ queryKey: ["lobbyInfo", accessCode], queryFn: () => publicInfo.lobby(accessCode!), enabled: !!accessCode });
+  const { logoUrl } = useBranding(accessCode, "e");
 
   const [snapshots, setSnapshots] = useState<Record<string, Snapshot>>({});
   const [skewMs, setSkewMs] = useState(0);
@@ -36,8 +38,13 @@ export default function LobbyView() {
 
   return (
     <div className="p-8 h-full overflow-auto">
-      <div className="text-sm uppercase tracking-widest text-zinc-500">{info.data.eventName}</div>
-      <h1 className="text-3xl font-semibold mb-6">Lobby</h1>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <div className="text-sm uppercase tracking-widest text-zinc-500">{info.data.eventName}</div>
+          <h1 className="text-3xl font-semibold">Lobby</h1>
+        </div>
+        {logoUrl && <img src={logoUrl} alt="" className="max-h-16 opacity-90" />}
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {info.data.rooms.map((r) => (
           <RoomCard key={r.id} roomName={r.name} snapshot={snapshots[r.id]} skewMs={skewMs} />

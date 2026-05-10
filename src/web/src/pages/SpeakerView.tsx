@@ -6,12 +6,14 @@ import SessionHeader from "@/components/timer/SessionHeader";
 import SessionFooter from "@/components/timer/SessionFooter";
 import { useTimerHub } from "@/hub/useTimerHub";
 import { publicInfo } from "@/api/publicInfo";
+import { useBranding } from "@/hooks/useBranding";
 
 export default function SpeakerView() {
   const { accessCode } = useParams<{ accessCode: string }>();
   const normalisedCode = (accessCode ?? "").replace("-", "").toUpperCase();
   const [roomId, setRoomId] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  useBranding(accessCode, "r");
 
   useEffect(() => {
     if (!accessCode) return;

@@ -21,8 +21,13 @@ export default function EventDashboardPage() {
         <h1 className="text-2xl font-semibold">{ev.name}</h1>
         <span className="text-sm text-zinc-500">lobby code <code>{formatCode(ev.lobbyAccessCode)}</code></span>
         <Link to={`/e/${formatCode(ev.lobbyAccessCode)}/lobby`} target="_blank" className="text-sm text-blue-400 hover:underline">Open lobby →</Link>
-        <Link to={`/events/${ev.id}/templates`} className="text-sm text-blue-400 hover:underline">Templates</Link>
       </div>
+      <nav className="flex gap-3 text-sm border-b border-zinc-800 pb-3">
+        <Link to={`/events/${ev.id}/templates`} className="text-blue-400 hover:underline">Templates</Link>
+        <Link to={`/events/${ev.id}/branding`} className="text-blue-400 hover:underline">Branding</Link>
+        <Link to={`/events/${ev.id}/members`} className="text-blue-400 hover:underline">Members</Link>
+        <Link to={`/events/${ev.id}/audit`} className="text-blue-400 hover:underline">Audit log</Link>
+      </nav>
       <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {rooms.map((r) => (
           <li key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 space-y-2">

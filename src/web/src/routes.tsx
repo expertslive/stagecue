@@ -6,6 +6,10 @@ import EventDashboardPage from "./pages/EventDashboardPage";
 import RoomControlPage from "./pages/RoomControlPage";
 import ScheduleEditorPage from "./pages/ScheduleEditorPage";
 import MessageTemplatesPage from "./pages/MessageTemplatesPage";
+import BrandingPage from "./pages/BrandingPage";
+import MembersPage from "./pages/MembersPage";
+import AuditPage from "./pages/AuditPage";
+import InvitationAcceptPage from "./pages/InvitationAcceptPage";
 import SpeakerView from "./pages/SpeakerView";
 import DoorView from "./pages/DoorView";
 import LobbyView from "./pages/LobbyView";
@@ -18,6 +22,10 @@ export const router = createBrowserRouter([
   { path: "/", element: <ProtectedRoute><EventsPage /></ProtectedRoute> },
   { path: "/events/:eventId", element: <ProtectedRoute><EventDashboardPage /></ProtectedRoute> },
   { path: "/events/:eventId/templates", element: <ProtectedRoute><MessageTemplatesPage /></ProtectedRoute> },
+  { path: "/events/:eventId/branding", element: <ProtectedRoute><BrandingPage /></ProtectedRoute> },
+  { path: "/events/:eventId/members", element: <ProtectedRoute><MembersPage /></ProtectedRoute> },
+  { path: "/events/:eventId/audit", element: <ProtectedRoute><AuditPage /></ProtectedRoute> },
+  { path: "/invitations/:token", element: <ProtectedRoute><InvitationAcceptPage /></ProtectedRoute> },
   { path: "/rooms/:roomId", element: <ProtectedRoute><RoomControlPage /></ProtectedRoute> },
   { path: "/rooms/:roomId/schedule", element: <ProtectedRoute><ScheduleEditorPage /></ProtectedRoute> },
   { path: "/r/:accessCode/speaker", element: <SpeakerView /> },
