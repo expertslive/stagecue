@@ -10,7 +10,7 @@
 | 2 | `2026-05-10-speaker-and-control.md` | ✅ Complete — 7/7 web unit tests, smoke verified |
 | 3 | `2026-05-10-schedule-and-audience-views.md` | ✅ Complete — schedule editor (drag-drop), door view, lobby view, message templates, /info endpoints |
 | 4 | `2026-05-10-branding-members-audit.md` | ✅ Complete — branding (theme + logo), members + invitations, audit log UI; 44/44 backend tests pass |
-| 5 | Container packaging + Azure deployment | Not started |
+| 5 | `2026-05-10-container-and-deploy.md` | ✅ Complete — 3-stage Dockerfile, docker-compose, AzureBlobStorage, bicep + deploy.sh; image runs end-to-end (`/health` ok, SPA served, migrations applied) |
 
 ## Smoke (Plan 2 verification, 2026-05-10)
 

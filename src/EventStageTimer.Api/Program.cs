@@ -31,9 +31,14 @@ else
 // MagicLink service
 builder.Services.AddScoped<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
 
-// File storage (LocalFileStorage; AzureBlobStorage deferred to Plan 5)
+// File storage — Local (default) or AzureBlob (production)
 builder.Services.Configure<EventStageTimer.Infrastructure.Storage.LocalFileStorageOptions>(builder.Configuration.GetSection("Storage:Local"));
-builder.Services.AddSingleton<EventStageTimer.Infrastructure.Storage.IFileStorage, EventStageTimer.Infrastructure.Storage.LocalFileStorage>();
+builder.Services.Configure<EventStageTimer.Infrastructure.Storage.AzureBlobStorageOptions>(builder.Configuration.GetSection("Storage:AzureBlob"));
+var storageMode = builder.Configuration["Storage:Mode"] ?? "Local";
+if (string.Equals(storageMode, "AzureBlob", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddSingleton<EventStageTimer.Infrastructure.Storage.IFileStorage, EventStageTimer.Infrastructure.Storage.AzureBlobStorage>();
+else
+    builder.Services.AddSingleton<EventStageTimer.Infrastructure.Storage.IFileStorage, EventStageTimer.Infrastructure.Storage.LocalFileStorage>();
 
 // Database
 builder.Services.AddDbContext<AppDbContext>(opts =>

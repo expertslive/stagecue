@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+src/EventStageTimer.Api/wwwroot/*
+!src/EventStageTimer.Api/wwwroot/.gitkeep
+
+.git
+.vs
+.vscode
+.idea
+*.user
+*.suo
+
+docs/superpowers/.superpowers/
+.superpowers/
+.DS_Store

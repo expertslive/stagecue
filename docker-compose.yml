@@ -1,0 +1,38 @@
+services:
+  app:
+    image: eventstagetimer:dev
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Default: "Server=db,1433;Database=EventStageTimer;User Id=sa;Password=${SA_PASSWORD:-Your_strong_password_123};TrustServerCertificate=true"
+      Database__AutoMigrate: "true"
+      Storage__Mode: "Local"
+      Storage__Local__Root: "/app/uploads"
+      Auth__Mode: "Password"
+      App__BaseUrl: "${APP_BASE_URL:-http://localhost:8080}"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${SA_PASSWORD:-Your_strong_password_123}"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqldata:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -No -Q "SELECT 1" || exit 1
+      interval: 10s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  uploads:
+  sqldata:

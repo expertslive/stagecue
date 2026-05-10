@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "sync-wwwroot": "rm -rf ../EventStageTimer.Api/wwwroot && mkdir -p ../EventStageTimer.Api/wwwroot && cp -r dist/* ../EventStageTimer.Api/wwwroot/",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
