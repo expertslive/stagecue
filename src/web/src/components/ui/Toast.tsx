@@ -1,27 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-
-interface ToastAction { label: string; onClick: () => void }
-interface ToastSpec {
-  message: string;
-  tone?: "default" | "error";
-  action?: ToastAction;
-  /** Auto-dismiss timeout in ms. Default 4000. Pass 0 to disable. */
-  timeoutMs?: number;
-}
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ToastContext, type ToastSpec } from "./toastContext";
 
 interface InternalToast extends ToastSpec { id: number }
-
-interface ToastApi {
-  show: (spec: ToastSpec) => void;
-}
-
-const ToastContext = createContext<ToastApi | null>(null);
-
-export function useToast(): ToastApi {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error("useToast must be used inside <ToastProvider>");
-  return ctx;
-}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<InternalToast[]>([]);
@@ -71,16 +51,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 function ToastView({ toast, onDismiss }: { toast: InternalToast; onDismiss: () => void }) {
-  // Slide+fade in on mount.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
   const bg = toast.tone === "error" ? "bg-red-700" : "bg-zinc-800";
   return (
     <div
       role={toast.tone === "error" ? "alert" : "status"}
-      className={`pointer-events-auto flex items-center gap-3 rounded-lg ${bg} px-4 py-2 shadow-lg transition duration-200 ease-out ${
-        mounted ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
-      }`}
+      className={`toast-enter pointer-events-auto flex items-center gap-3 rounded-lg ${bg} px-4 py-2 shadow-lg`}
     >
       <span className="text-sm text-white">{toast.message}</span>
       {toast.action && (

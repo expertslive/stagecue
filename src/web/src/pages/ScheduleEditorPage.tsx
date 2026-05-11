@@ -7,7 +7,7 @@ import ScheduleEditor from "@/components/control/ScheduleEditor";
 import ScheduleItemForm, { type ScheduleItemFormValues } from "@/components/control/ScheduleItemForm";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Button from "@/components/ui/Button";
-import { useToast } from "@/components/ui/Toast";
+import { useToast } from "@/components/ui/toastContext";
 import SkeletonRow from "@/components/ui/SkeletonRow";
 import { Plus } from "lucide-react";
 

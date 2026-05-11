@@ -11,13 +11,13 @@ interface Props {
 
 export default function EventIdentity({ event, snapshots, roomCount }: Props) {
   // Tick once a minute so the relative time / status pill stays current.
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 30_000);
+    const id = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(id);
   }, []);
 
-  const status = deriveStatus(event, snapshots, roomCount);
+  const status = deriveStatus(event, snapshots, roomCount, now);
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -55,8 +55,7 @@ function StatusPill({ status }: { status: StatusInfo }) {
   );
 }
 
-function deriveStatus(event: EventDto, snapshots: Record<string, Snapshot>, _roomCount: number): StatusInfo {
-  const now = Date.now();
+function deriveStatus(event: EventDto, snapshots: Record<string, Snapshot>, roomCount: number, now: number): StatusInfo {
   const start = new Date(event.startsAtUtc).getTime();
   const end = new Date(event.endsAtUtc).getTime();
 
@@ -72,7 +71,9 @@ function deriveStatus(event: EventDto, snapshots: Record<string, Snapshot>, _roo
     return { kind: "after", label: `Ended ${relativePast(now - end)}` };
   }
   if (runningRooms > 0) {
-    const label = runningRooms === 1 ? "Live · 1 room running" : `Live · ${runningRooms} rooms running`;
+    const label = roomCount > 0
+      ? `Live · ${runningRooms}/${roomCount} rooms running`
+      : runningRooms === 1 ? "Live · 1 room running" : `Live · ${runningRooms} rooms running`;
     return { kind: "live-running", label };
   }
   return { kind: "live-idle", label: "In progress · all rooms idle" };

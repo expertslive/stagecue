@@ -47,7 +47,7 @@ export default function Countdown({ snapshot, skewMs, variant = "hero" }: Props)
         style={{
           color,
           fontSize: fontSizeFor[variant],
-          letterSpacing: "-0.04em",
+          letterSpacing: "0",
           fontFamily: '"SF Pro Display", -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif',
         }}
         aria-live={announce ? "polite" : undefined}
@@ -58,4 +58,3 @@ export default function Countdown({ snapshot, skewMs, variant = "hero" }: Props)
     </div>
   );
 }
-

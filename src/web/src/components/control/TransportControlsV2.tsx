@@ -116,18 +116,20 @@ export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
         )}
       </div>
 
-      {/* Stop — pinned to the right edge, maximally separated from the dominant action. */}
+      {/* Stop — pinned to the right edge, maximally separated from the dominant action.
+          Stop is one-click because it's the normal end-of-session action (speaker finishes
+          → press Stop). Skip and Reset stay hold-to-confirm in the More menu since those
+          two are the genuinely destructive actions. */}
       {showStop && (
-        <HoldToConfirm
+        <Button
           size="md"
           variant="secondary"
-          onConfirm={() => handle(hub.stopRoom(snapshot.roomId, v))}
+          onClick={() => handle(hub.stopRoom(snapshot.roomId, v))}
           leadingIcon={<Square className="size-4" />}
-          holdingLabel="Hold to stop…"
           className="ml-auto"
         >
           Stop
-        </HoldToConfirm>
+        </Button>
       )}
     </div>
   );

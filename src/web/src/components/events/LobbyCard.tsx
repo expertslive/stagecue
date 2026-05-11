@@ -9,6 +9,7 @@ import AccessCodeBadge from "./AccessCodeBadge";
 interface Props {
   /** Raw 8-character lobby code (no dash). */
   code: string;
+  connectedCount?: number;
   /** Triggered by the "Reset access code" item in the overflow menu. */
   onReset: () => void;
 }
@@ -17,7 +18,7 @@ interface Props {
  * Hero card for the audience lobby entrance. Treats the access code as a
  * first-class artifact: shown large, copyable, with an inline QR.
  */
-export default function LobbyCard({ code, onReset }: Props) {
+export default function LobbyCard({ code, connectedCount = 0, onReset }: Props) {
   const formatted = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
   const url = `${window.location.origin}/e/${formatted}/lobby`;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -51,6 +52,9 @@ export default function LobbyCard({ code, onReset }: Props) {
             </p>
             <div className="mt-3">
               <AccessCodeBadge code={code} qrUrl={url} size="prominent" />
+            </div>
+            <div className="mt-3">
+              <PresencePill count={connectedCount} label={connectedCount === 1 ? "lobby display connected" : "lobby displays connected"} />
             </div>
           </div>
         </div>
@@ -88,5 +92,18 @@ export default function LobbyCard({ code, onReset }: Props) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function PresencePill({ count, label }: { count: number; label: string }) {
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
+      count > 0
+        ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/20"
+        : "bg-white/5 text-zinc-500 ring-white/10"
+    }`}>
+      <span className={`size-1.5 rounded-full ${count > 0 ? "bg-emerald-400" : "bg-zinc-600"}`} />
+      {count} {label}
+    </span>
   );
 }

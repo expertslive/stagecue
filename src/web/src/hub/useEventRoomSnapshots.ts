@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { TimerHub } from "./timerHub";
+import { LogLevel } from "@microsoft/signalr";
+import { TimerHub, type DisplayPresence } from "./timerHub";
 import type { Snapshot } from "@/api/types";
 import { measureSkew } from "@/lib/clockSkew";
 
 export interface UseEventRoomSnapshotsResult {
   snapshots: Record<string, Snapshot>;
+  presence: DisplayPresence;
   skewMs: number;
   ready: boolean;
   error: Error | null;
 }
+
+const emptyPresence: DisplayPresence = { lobby: 0, rooms: {} };
 
 /**
  * Opens a single authenticated SignalR connection and subscribes to every room
@@ -18,8 +22,9 @@ export interface UseEventRoomSnapshotsResult {
  * up to ~50 rooms. Beyond that we'd want server-side multiplexing rather than
  * N resync calls.
  */
-export function useEventRoomSnapshots(roomIds: string[]): UseEventRoomSnapshotsResult {
+export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseEventRoomSnapshotsResult {
   const [snapshots, setSnapshots] = useState<Record<string, Snapshot>>({});
+  const [presence, setPresence] = useState<DisplayPresence>(emptyPresence);
   const [skewMs, setSkewMs] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -33,11 +38,14 @@ export function useEventRoomSnapshots(roomIds: string[]): UseEventRoomSnapshotsR
     if (ids.length === 0) return;
 
     let cancelled = false;
-    const hub = new TimerHub(null);
+    // Read-only dashboard connection: silence SignalR client logging so that expected
+    // per-room "Forbidden" rejections (RoomOperator scoped to a subset, Viewer with no
+    // hub access) don't render as red errors in the operator's console. Real connection
+    // problems still surface via the `error` state below.
+    const hub = new TimerHub(null, undefined, LogLevel.Critical);
 
     const offSnap = hub.onSnapshot((snap) => {
       if (cancelled) return;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSnapshots((prev) => ({ ...prev, [snap.roomId]: snap }));
       setSkewMs(measureSkew(snap.serverNowUtc));
     });
@@ -45,24 +53,35 @@ export function useEventRoomSnapshots(roomIds: string[]): UseEventRoomSnapshotsR
       if (cancelled) return;
       setSnapshots((prev) => prev[rid] ? { ...prev, [rid]: { ...prev[rid], currentMessage: message } } : prev);
     });
+    const offPresence = hub.onPresence((changedEventId, nextPresence) => {
+      if (cancelled || (eventId && changedEventId !== eventId)) return;
+      setPresence(nextPresence);
+    });
 
     hub.start()
       .then(async () => {
         if (cancelled) return;
         setReady(true);
-        // Subscribe + fetch the current state for every room in parallel.
-        const results = await Promise.allSettled(ids.map((id) => hub.resync(id)));
+        // Subscribe + fetch the current state for every room in parallel. Each resync is
+        // caught individually so a Forbidden on one room doesn't block the others, and so
+        // the rejection promise is consumed (no "unhandled rejection" noise).
+        const results = await Promise.all(ids.map((id) =>
+          hub.resync(id).catch(() => null as Snapshot | null),
+        ));
         if (cancelled) return;
         const merged: Record<string, Snapshot> = {};
-        for (const r of results) {
-          if (r.status === "fulfilled" && r.value) {
-            merged[r.value.roomId] = r.value;
-          }
+        for (const snap of results) {
+          if (snap) merged[snap.roomId] = snap;
         }
         if (Object.keys(merged).length > 0) {
           setSnapshots((prev) => ({ ...prev, ...merged }));
           const last = Object.values(merged).at(-1);
           if (last) setSkewMs(measureSkew(last.serverNowUtc));
+        }
+        if (eventId) {
+          // Presence is best-effort — a Viewer who can't read presence shouldn't break the dashboard.
+          const nextPresence = await hub.getPresenceForEvent(eventId).catch(() => emptyPresence);
+          if (!cancelled) setPresence(nextPresence);
         }
       })
       .catch((e) => { if (!cancelled) setError(e as Error); });
@@ -71,9 +90,10 @@ export function useEventRoomSnapshots(roomIds: string[]): UseEventRoomSnapshotsR
       cancelled = true;
       offSnap();
       offMsg();
+      offPresence();
       hub.stop().catch(() => { /* ignore */ });
     };
-  }, [key]);
+  }, [key, eventId]);
 
-  return { snapshots, skewMs, ready, error };
+  return { snapshots, presence, skewMs, ready, error };
 }
