@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { ToastProvider, useToast } from "@/components/ui/Toast";
+import { ToastProvider } from "@/components/ui/Toast";
+import { useToast } from "@/components/ui/toastContext";
 
 function Harness({ onClick }: { onClick: (fns: ReturnType<typeof useToast>) => void }) {
   const t = useToast();

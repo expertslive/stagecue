@@ -25,16 +25,15 @@ export default function UpcomingToday({ rooms, windowMinutes = 90 }: Props) {
   });
 
   // Tick every minute so the "now" marker and item positions stay current.
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 60_000);
+    const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
 
   const allLoading = queries.every((q) => q.isLoading);
   if (allLoading) return null;
 
-  const now = Date.now();
   const end = now + windowMinutes * 60_000;
   const lanes: Lane[] = rooms.map((r, i) => {
     const items = (queries[i].data ?? []).filter((it) => {

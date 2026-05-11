@@ -9,10 +9,11 @@ import EventIdentity from "@/components/events/EventIdentity";
 import LobbyCard from "@/components/events/LobbyCard";
 import RoomTile from "@/components/events/RoomTile";
 import UpcomingToday from "@/components/events/UpcomingToday";
+import PreflightPanel from "@/components/events/PreflightPanel";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import { useToast } from "@/components/ui/Toast";
+import { useToast } from "@/components/ui/toastContext";
 import Skeleton from "@/components/ui/Skeleton";
 import SkeletonRow from "@/components/ui/SkeletonRow";
 import RoomFormSheet from "@/components/events/RoomFormSheet";
@@ -35,7 +36,7 @@ export default function EventDashboardPage() {
   const [pendingDeleteRoom, setPendingDeleteRoom] = useState<RoomDto | null>(null);
 
   const roomIds = roomsQuery.data?.map((r) => r.id) ?? [];
-  const { snapshots, skewMs } = useEventRoomSnapshots(roomIds);
+  const { snapshots, presence, skewMs } = useEventRoomSnapshots(roomIds, eventId);
 
   const rotateLobby = useMutation({
     mutationFn: () => events.regenerateLobbyAccessCode(eventId!),
@@ -100,8 +101,11 @@ export default function EventDashboardPage() {
 
       <LobbyCard
         code={ev.lobbyAccessCode}
+        connectedCount={presence.lobby}
         onReset={() => setPendingRotate({ kind: "lobby" })}
       />
+
+      <PreflightPanel event={ev} rooms={eventRooms} presence={presence} />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between">
@@ -131,6 +135,7 @@ export default function EventDashboardPage() {
                 key={r.id}
                 room={r}
                 snapshot={snapshots[r.id]}
+                presence={presence.rooms[r.id]}
                 skewMs={skewMs}
                 onEdit={setEditingRoom}
                 onResetCode={(room) => setPendingRotate({ kind: "room", id: room.id, name: room.name })}

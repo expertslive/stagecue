@@ -4,6 +4,7 @@ import SetupPage from "./pages/SetupPage";
 import EventsPage from "./pages/EventsPage";
 import EventDashboardPage from "./pages/EventDashboardPage";
 import RoomControlPage from "./pages/RoomControlPage";
+import RoomShowModePage from "./pages/RoomShowModePage";
 import ScheduleEditorPage from "./pages/ScheduleEditorPage";
 import MessageTemplatesPage from "./pages/MessageTemplatesPage";
 import BrandingPage from "./pages/BrandingPage";
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
   { path: "/events/:eventId/audit", element: <ProtectedRoute><AuditPage /></ProtectedRoute> },
   { path: "/invitations/:token", element: <ProtectedRoute><InvitationAcceptPage /></ProtectedRoute> },
   { path: "/rooms/:roomId", element: <ProtectedRoute><RoomControlPage /></ProtectedRoute> },
+  { path: "/rooms/:roomId/show", element: <ProtectedRoute><RoomShowModePage /></ProtectedRoute> },
   { path: "/rooms/:roomId/schedule", element: <ProtectedRoute><ScheduleEditorPage /></ProtectedRoute> },
   { path: "/r/:accessCode/speaker", element: <SpeakerView /> },
   { path: "/r/:accessCode/door", element: <DoorView /> },

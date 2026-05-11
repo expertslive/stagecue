@@ -9,6 +9,7 @@ using EventStageTimer.Infrastructure.Timer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Concurrent;
 using System.Security.Claims;
 
 namespace EventStageTimer.Api.Hubs;
@@ -20,6 +21,9 @@ internal static class HubGroups
     public static string EventControl(Guid eventId) => $"event-control:{eventId}";
 }
 
+public sealed record RoomDisplayPresenceDto(int Speaker, int Door, int Other);
+public sealed record DisplayPresenceDto(int Lobby, IReadOnlyDictionary<Guid, RoomDisplayPresenceDto> Rooms);
+
 [Authorize(AuthenticationSchemes = IdentitySetup.SchemeName + "," + PublicAccessCodeAuthHandler.SchemeName)]
 public sealed class TimerHub(
     AppDbContext db,
@@ -28,6 +32,8 @@ public sealed class TimerHub(
     ITenantContext tenantContext,
     IClock clock) : Hub
 {
+    private static readonly ConcurrentDictionary<string, int> Presence = new();
+
     /// <summary>
     /// SignalR creates a fresh DI scope per hub method invocation, so the request-scoped
     /// <see cref="ITenantContext"/> arrives empty. We rebuild it from the authenticated
@@ -64,21 +70,42 @@ public sealed class TimerHub(
         if (publicCtx.RoomId is { } pubRoom)
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.Room(pubRoom));
+            RegisterPresence(PresenceKeyForRoom(pubRoom, SurfaceFromQuery()));
             var snap = await commands.GetSnapshotAsync(pubRoom, Context.ConnectionAborted);
             if (snap is not null) await Clients.Caller.SendAsync("RoomStateChanged", snap);
+            var eventId = await db.Rooms.Where(r => r.Id == pubRoom).Select(r => r.EventId).FirstOrDefaultAsync();
+            if (eventId != Guid.Empty) await BroadcastPresenceAsync(eventId);
         }
         if (publicCtx.IsLobbyCode && publicCtx.EventId is { } pubEvent)
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.EventLobby(pubEvent));
+            RegisterPresence(PresenceKeyForLobby(pubEvent));
             var lobbyRooms = await db.Rooms.Where(r => r.EventId == pubEvent).Select(r => r.Id).ToListAsync();
             foreach (var rid in lobbyRooms)
             {
                 var snap = await commands.GetSnapshotAsync(rid, Context.ConnectionAborted);
                 if (snap is not null) await Clients.Caller.SendAsync("RoomStateChanged", snap);
             }
+            await BroadcastPresenceAsync(pubEvent);
         }
 
         await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        EnsureTenantContext();
+        if (Context.Items.TryGetValue("presenceKeys", out var raw) && raw is List<string> keys)
+        {
+            foreach (var key in keys) DecrementPresence(key);
+            if (publicCtx.EventId is { } eventId) await BroadcastPresenceAsync(eventId);
+            else if (publicCtx.RoomId is { } roomId)
+            {
+                var disconnectedEventId = await db.Rooms.Where(r => r.Id == roomId).Select(r => r.EventId).FirstOrDefaultAsync();
+                if (disconnectedEventId != Guid.Empty) await BroadcastPresenceAsync(disconnectedEventId);
+            }
+        }
+        await base.OnDisconnectedAsync(exception);
     }
 
     /// <summary>Returns the current snapshot for a room. Caller must have at least Viewer-level access (or be the public-code client for this room).</summary>
@@ -90,6 +117,18 @@ public sealed class TimerHub(
 
         await EnsureRoomAccessAsync(roomId, EventRole.Viewer);
         return await commands.GetSnapshotAsync(roomId, Context.ConnectionAborted);
+    }
+
+    public async Task<DisplayPresenceDto> GetPresenceForEvent(Guid eventId)
+    {
+        EnsureTenantContext();
+        var userId = RequireOperator();
+        var membership = await db.EventMemberships
+            .Where(m => m.EventId == eventId && m.UserId == userId)
+            .Select(m => m.Id)
+            .FirstOrDefaultAsync();
+        if (membership == Guid.Empty) throw new HubException("Forbidden");
+        return await BuildPresenceAsync(eventId);
     }
 
     // -------- State-changing methods (versioned) --------
@@ -196,6 +235,51 @@ public sealed class TimerHub(
         await Clients.Group(HubGroups.EventControl(eventId)).SendAsync("RoomStateChanged", snapshot);
         return snapshot;
     }
+
+    private string SurfaceFromQuery()
+    {
+        var surface = Context.GetHttpContext()?.Request.Query["surface"].ToString().ToLowerInvariant();
+        return surface is "speaker" or "door" ? surface : "other";
+    }
+
+    private void RegisterPresence(string key)
+    {
+        Presence.AddOrUpdate(key, 1, (_, n) => n + 1);
+        if (!Context.Items.TryGetValue("presenceKeys", out var raw) || raw is not List<string> keys)
+        {
+            keys = [];
+            Context.Items["presenceKeys"] = keys;
+        }
+        keys.Add(key);
+    }
+
+    private static void DecrementPresence(string key)
+    {
+        Presence.AddOrUpdate(key, 0, (_, n) => Math.Max(0, n - 1));
+        if (Presence.TryGetValue(key, out var count) && count <= 0)
+            Presence.TryRemove(key, out _);
+    }
+
+    private async Task BroadcastPresenceAsync(Guid eventId)
+    {
+        var presence = await BuildPresenceAsync(eventId);
+        await Clients.Group(HubGroups.EventControl(eventId)).SendAsync("DisplayPresenceChanged", eventId, presence);
+    }
+
+    private async Task<DisplayPresenceDto> BuildPresenceAsync(Guid eventId)
+    {
+        var roomIds = await db.Rooms.Where(r => r.EventId == eventId).Select(r => r.Id).ToListAsync();
+        var rooms = roomIds.ToDictionary(
+            id => id,
+            id => new RoomDisplayPresenceDto(
+                Speaker: Presence.GetValueOrDefault(PresenceKeyForRoom(id, "speaker")),
+                Door: Presence.GetValueOrDefault(PresenceKeyForRoom(id, "door")),
+                Other: Presence.GetValueOrDefault(PresenceKeyForRoom(id, "other"))));
+        return new DisplayPresenceDto(Presence.GetValueOrDefault(PresenceKeyForLobby(eventId)), rooms);
+    }
+
+    private static string PresenceKeyForRoom(Guid roomId, string surface) => $"room:{roomId}:{surface}";
+    private static string PresenceKeyForLobby(Guid eventId) => $"event:{eventId}:lobby";
 
     // Suppress unused-parameter warning for `clock` until it's wired into a future feature.
     private void _SuppressUnused() => _ = clock;

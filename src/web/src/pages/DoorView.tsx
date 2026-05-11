@@ -10,7 +10,7 @@ export default function DoorView() {
   const { accessCode } = useParams<{ accessCode: string }>();
   const normalised = (accessCode ?? "").replace("-", "").toUpperCase();
   const info = useQuery({ queryKey: ["roomInfo", accessCode], queryFn: () => publicInfo.room(accessCode!), enabled: !!accessCode });
-  const { snapshot, skewMs, ready, error } = useTimerHub(info.data?.roomId ?? null, normalised);
+  const { snapshot, skewMs, ready, error } = useTimerHub(info.data?.roomId ?? null, normalised, "door");
   const { logoUrl } = useBranding(accessCode, "r");
 
   if (info.error) return <ConnectingScreen target="this room" error="URL not valid" />;
@@ -24,4 +24,3 @@ export default function DoorView() {
     </div>
   );
 }
-
