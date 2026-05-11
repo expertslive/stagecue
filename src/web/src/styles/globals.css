@@ -3,6 +3,9 @@
 :root {
   --bg: #0a0a0a;
   --surface: #161618;
+  --surface-elevated: #1d1d20;
+  --hairline: rgba(255, 255, 255, 0.08);
+  --glass: rgba(22, 22, 24, 0.72);
   --text-primary: #e8e8e8;
   --text-muted: #aaaaaa;
   /* Brand: refined SF-style green (was #2ecc71). Used for the countdown above all thresholds. */
@@ -69,6 +72,18 @@ body {
 }
 .sheet-backdrop-enter { animation: sheet-backdrop-enter 200ms var(--ease-out); }
 .sheet-panel-enter    { animation: sheet-panel-enter 280ms var(--ease-out); }
+
+@keyframes toast-enter {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.toast-enter { animation: toast-enter 200ms var(--ease-out); }
+
+@keyframes message-enter {
+  from { transform: translate(-50%, 12px); opacity: 0; }
+  to   { transform: translate(-50%, 0); opacity: 1; }
+}
+.message-enter { animation: message-enter 240ms var(--ease-out); }
 
 /* Visible focus ring across the app — softer Apple-style glow rather than a hard outline.
    Falls through to outline for elements that suppress box-shadow. */

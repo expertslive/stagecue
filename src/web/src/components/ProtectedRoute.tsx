@@ -7,12 +7,12 @@ import Skeleton from "@/components/ui/Skeleton";
 
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
   const signedIn = useAuthStore((s) => s.signedInEmail);
-  const [checking, setChecking] = useState(!signedIn);
+  const [checking, setChecking] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [redirectToSignIn, setRedirectToSignIn] = useState(false);
 
   useEffect(() => {
-    if (signedIn) { setChecking(false); return; }
+    if (signedIn) return;
     let cancelled = false;
     (async () => {
       try {
@@ -29,6 +29,7 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [signedIn]);
 
+  if (signedIn) return <AppShell>{children}</AppShell>;
   if (checking) return <div className="p-8"><Skeleton className="h-4 w-24" /></div>;
   if (needsSetup) return <Navigate to="/setup" replace />;
   if (redirectToSignIn) return <Navigate to="/signin" replace />;

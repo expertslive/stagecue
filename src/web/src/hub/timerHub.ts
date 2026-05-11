@@ -3,17 +3,29 @@ import type { Snapshot } from "@/api/types";
 
 export type SnapshotListener = (snapshot: Snapshot) => void;
 export type MessageListener = (roomId: string, message: string | null) => void;
+export interface RoomDisplayPresence { speaker: number; door: number; other: number }
+export interface DisplayPresence { lobby: number; rooms: Record<string, RoomDisplayPresence> }
+export type PresenceListener = (eventId: string, presence: DisplayPresence) => void;
 
 export class TimerHub {
   private conn: HubConnection;
   private snapshotListeners = new Set<SnapshotListener>();
   private messageListeners = new Set<MessageListener>();
+  private presenceListeners = new Set<PresenceListener>();
 
   /**
    * @param accessCode 8-char public access code (no dash). Pass null for cookie-authenticated operators.
+   * @param surface Optional audience surface marker for presence accounting.
+   * @param logLevel SignalR client log level. Default Warning; pass `LogLevel.Critical` for
+   *   read-only multi-room dashboards where authorised-room rejections are expected and we
+   *   surface real failures through our own state instead.
    */
-  constructor(accessCode: string | null) {
-    const url = accessCode ? `/hub/timer?code=${encodeURIComponent(accessCode)}` : "/hub/timer";
+  constructor(accessCode: string | null, surface?: "speaker" | "door" | "lobby", logLevel: LogLevel = LogLevel.Warning) {
+    const query = new URLSearchParams();
+    if (accessCode) query.set("code", accessCode);
+    if (surface) query.set("surface", surface);
+    const qs = query.toString();
+    const url = qs ? `/hub/timer?${qs}` : "/hub/timer";
     this.conn = new HubConnectionBuilder()
       .withUrl(url, {
         transport: HttpTransportType.WebSockets | HttpTransportType.ServerSentEvents | HttpTransportType.LongPolling,
@@ -30,7 +42,7 @@ export class TimerHub {
           return 30000;                      // 5min+: every 30s, forever
         },
       })
-      .configureLogging(LogLevel.Warning)
+      .configureLogging(logLevel)
       .build();
 
     this.conn.on("RoomStateChanged", (snap: Snapshot) => {
@@ -39,6 +51,9 @@ export class TimerHub {
     this.conn.on("MessageChanged", (payload: { roomId: string; message: string | null }) => {
       this.messageListeners.forEach((l) => l(payload.roomId, payload.message));
     });
+    this.conn.on("DisplayPresenceChanged", (eventId: string, presence: DisplayPresence) => {
+      this.presenceListeners.forEach((l) => l(eventId, presence));
+    });
   }
 
   start() { return this.conn.start(); }
@@ -46,8 +61,10 @@ export class TimerHub {
 
   onSnapshot(l: SnapshotListener) { this.snapshotListeners.add(l); return () => this.snapshotListeners.delete(l); }
   onMessage(l: MessageListener) { this.messageListeners.add(l); return () => this.messageListeners.delete(l); }
+  onPresence(l: PresenceListener) { this.presenceListeners.add(l); return () => this.presenceListeners.delete(l); }
 
   resync(roomId: string) { return this.conn.invoke<Snapshot | null>("Resync", roomId); }
+  getPresenceForEvent(eventId: string) { return this.conn.invoke<DisplayPresence>("GetPresenceForEvent", eventId); }
 
   startAuto(roomId: string, version: number) { return this.invokeVersioned<Snapshot>("StartAuto", roomId, version); }
   startItem(roomId: string, scheduleItemId: string, version: number) { return this.invokeVersioned<Snapshot>("StartItem", roomId, scheduleItemId, version); }

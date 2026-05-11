@@ -25,7 +25,7 @@ export default function SpeakerView() {
       .catch((e) => setResolveError(String((e as Error).message ?? e)));
   }, [accessCode]);
 
-  const { snapshot, skewMs, ready, error } = useTimerHub(roomId, normalisedCode);
+  const { snapshot, skewMs, ready, error } = useTimerHub(roomId, normalisedCode, "speaker");
 
   if (resolveError) return <ConnectingScreen target="this room" error={resolveError} />;
   if (!roomId) return <ConnectingScreen target="this room" />;

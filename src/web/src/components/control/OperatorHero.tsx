@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
+import { Timer } from "lucide-react";
 import type { Snapshot } from "@/api/types";
 import Countdown from "@/components/timer/Countdown";
+import Button from "@/components/ui/Button";
 import { activeCountdownColor, computeRemaining } from "@/lib/countdownState";
 import { relativeStartHint } from "@/lib/timeHints";
 
 interface Props {
   snapshot: Snapshot;
   skewMs: number;
+  /** When provided AND the room has no current/next item, render a "Quick timer" CTA. */
+  onQuickTimer?: () => void;
 }
 
 /**
@@ -14,7 +18,7 @@ interface Props {
  * into a single signature surface. The active threshold colour bleeds through
  * as a soft radial halo behind the numeral.
  */
-export default function OperatorHero({ snapshot, skewMs }: Props) {
+export default function OperatorHero({ snapshot, skewMs, onQuickTimer }: Props) {
   // Re-render every 1s so the relative next-item hint stays fresh.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -28,6 +32,12 @@ export default function OperatorHero({ snapshot, skewMs }: Props) {
   const remainingMs = computeRemaining(snapshot, skewMs);
   const isOverrun = snapshot.phase === "Running" && remainingMs <= 0;
   const phaseLabel = phaseLabelFor(snapshot, isOverrun);
+  // "Empty" = no live session AND nothing queued. This is the only state where
+  // the operator has no way to start anything without authoring a schedule item first.
+  const isEmpty =
+    !snapshot.currentItem &&
+    !snapshot.nextItem &&
+    (snapshot.phase === "Idle" || snapshot.phase === "Ended");
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-white/5 bg-zinc-900/60 backdrop-blur-sm">
@@ -67,6 +77,20 @@ export default function OperatorHero({ snapshot, skewMs }: Props) {
         <div className="flex items-center justify-center py-2">
           <Countdown snapshot={snapshot} skewMs={skewMs} variant="compact" />
         </div>
+
+        {/* Empty-state CTA: lets the operator start an ad-hoc countdown without authoring a schedule. */}
+        {isEmpty && onQuickTimer && (
+          <div className="flex flex-col items-center gap-2 pt-1">
+            <p className="text-sm text-zinc-400">No schedule for this room yet.</p>
+            <Button
+              variant="primary"
+              leadingIcon={<Timer className="size-4" />}
+              onClick={onQuickTimer}
+            >
+              Quick timer
+            </Button>
+          </div>
+        )}
 
         {/* Next-item footer */}
         {nextLine && (

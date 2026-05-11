@@ -23,7 +23,7 @@ export default function LobbyView() {
   useEffect(() => {
     if (!info.data || !accessCode) return;
     let cancelled = false;
-    const hub = new TimerHub(normalised);
+    const hub = new TimerHub(normalised, "lobby");
     const off = hub.onSnapshot((snap) => {
       if (cancelled) return;
       setSnapshots((prev) => ({ ...prev, [snap.roomId]: snap }));
@@ -54,4 +54,3 @@ export default function LobbyView() {
     </div>
   );
 }
-

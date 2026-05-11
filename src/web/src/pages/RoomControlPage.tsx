@@ -1,19 +1,24 @@
 import { useRef, useState } from "react";
-import { useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { Link, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { rooms } from "@/api/rooms";
+import { scheduleItems } from "@/api/scheduleItems";
 import Skeleton from "@/components/ui/Skeleton";
 import { useTimerHub } from "@/hub/useTimerHub";
 import TransportControlsV2 from "@/components/control/TransportControlsV2";
 import OperatorHero from "@/components/control/OperatorHero";
 import ToolsPanel, { type ToolsTabId } from "@/components/control/ToolsPanel";
 import ScheduleRail from "@/components/control/ScheduleRail";
+import QuickTimerSheet from "@/components/control/QuickTimerSheet";
 import LiveIndicator from "@/components/timer/LiveIndicator";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
-import { useToast } from "@/components/ui/Toast";
+import { useToast } from "@/components/ui/toastContext";
 import useShortcuts from "@/hooks/useShortcuts";
 import ShortcutsOverlay from "@/components/control/ShortcutsOverlay";
 import { humaniseHubError } from "@/lib/hubErrors";
+import useRehearsalClock from "@/hooks/useRehearsalClock";
+import RehearsalControls from "@/components/control/RehearsalControls";
+import Button from "@/components/ui/Button";
 
 export default function RoomControlPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -23,11 +28,30 @@ export default function RoomControlPage() {
     enabled: !!roomId,
   });
   const { hub, snapshot, skewMs, ready, error } = useTimerHub(roomId ?? null, null);
+  const rehearsal = useRehearsalClock(skewMs);
   const toast = useToast();
+  const qc = useQueryClient();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [pendingDestructive, setPendingDestructive] = useState<"skip" | "reset" | null>(null);
   const [toolsTab, setToolsTab] = useState<ToolsTabId>("adjust");
+  const [quickTimerOpen, setQuickTimerOpen] = useState(false);
   const messageInputRef = useRef<HTMLInputElement>(null);
+
+  async function startQuickTimer({ title, durationSec }: { title: string; durationSec: number }) {
+    if (!hub || !snapshot || !roomId) throw new Error("Not connected yet.");
+    const item = await scheduleItems.create(roomId, {
+      title,
+      speakerName: null,
+      scheduledStartUtc: new Date().toISOString(),
+      durationSec,
+      preRollSec: 0,
+      autoStart: false,
+      thresholdsJson: null,
+    });
+    qc.invalidateQueries({ queryKey: ["schedule", roomId] });
+    await hub.startItem(snapshot.roomId, item.id, snapshot.version);
+    setQuickTimerOpen(false);
+  }
 
   const safe = (p: Promise<unknown>) => p.catch((e) => toast.show({ message: humaniseHubError(e), tone: "error" }));
 
@@ -75,23 +99,36 @@ export default function RoomControlPage() {
   }
 
   const nextTitle = snapshot.nextItem?.title ?? null;
-  const scheduleItems = scheduleQuery.data ?? [];
+  const scheduleList = scheduleQuery.data ?? [];
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
       {/* Header row: just the live indicator. The EventContextBar already provides Event ▸ Room. */}
       <div className="mb-4 flex items-center justify-end">
         <LiveIndicator ready={ready} hasError={error !== null} lastSnapshotUtc={snapshot.serverNowUtc} />
+        <Link to={`/rooms/${roomId}/show`}>
+          <Button size="sm" variant="ghost">Show mode</Button>
+        </Link>
       </div>
 
       {/* Two-column on lg+: control surface left, schedule rail right. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
         <div className="space-y-4 min-w-0">
-          <OperatorHero snapshot={snapshot} skewMs={skewMs} />
+          <OperatorHero
+            snapshot={snapshot}
+            skewMs={rehearsal.effectiveSkewMs}
+            onQuickTimer={() => setQuickTimerOpen(true)}
+          />
           <TransportControlsV2
             hub={hub}
             snapshot={snapshot}
             onError={(m) => toast.show({ message: m, tone: "error" })}
+          />
+          <RehearsalControls
+            enabled={rehearsal.enabled}
+            speed={rehearsal.speed}
+            onStart={rehearsal.start}
+            onStop={rehearsal.stop}
           />
           <ToolsPanel
             ref={messageInputRef}
@@ -99,7 +136,7 @@ export default function RoomControlPage() {
             snapshot={snapshot}
             activeTab={toolsTab}
             onTabChange={setToolsTab}
-            scheduleItems={scheduleItems}
+            scheduleItems={scheduleList}
             includeScheduleTab // narrow viewports stack everything, so we expose Schedule here too
             onError={(m) => toast.show({ message: m, tone: "error" })}
           />
@@ -107,7 +144,7 @@ export default function RoomControlPage() {
 
         <div className="hidden lg:block lg:sticky lg:top-20">
           <ScheduleRail
-            items={scheduleItems}
+            items={scheduleList}
             currentItemId={snapshot.currentItem?.id ?? null}
             editHref={`/rooms/${roomId}/schedule`}
           />
@@ -131,6 +168,12 @@ export default function RoomControlPage() {
           safe(hub!.skipNext(snapshot.roomId, snapshot.version));
         }}
         onCancel={() => setPendingDestructive(null)}
+      />
+
+      <QuickTimerSheet
+        open={quickTimerOpen}
+        onClose={() => setQuickTimerOpen(false)}
+        onSubmit={startQuickTimer}
       />
 
       <ConfirmDialog

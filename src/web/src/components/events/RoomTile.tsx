@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { MoreHorizontal, Play, Pause, Hourglass } from "lucide-react";
 import type { RoomDto, Snapshot } from "@/api/types";
+import type { RoomDisplayPresence } from "@/hub/timerHub";
 import { activeCountdownColor, computeRemaining } from "@/lib/countdownState";
 import { formatRemaining } from "@/lib/time";
 import Card from "@/components/ui/Card";
@@ -10,6 +11,7 @@ import Button from "@/components/ui/Button";
 interface Props {
   room: RoomDto;
   snapshot: Snapshot | undefined;
+  presence?: RoomDisplayPresence;
   skewMs: number;
   onEdit: (room: RoomDto) => void;
   onResetCode: (room: RoomDto) => void;
@@ -21,7 +23,7 @@ interface Props {
  * to the room's snapshot and renders phase + current/next + countdown, with the
  * Control button as the dominant action and a ⋯ menu for everything else.
  */
-export default function RoomTile({ room, snapshot, skewMs, onEdit, onResetCode, onDelete }: Props) {
+export default function RoomTile({ room, snapshot, presence, skewMs, onEdit, onResetCode, onDelete }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [, setTick] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -92,6 +94,7 @@ export default function RoomTile({ room, snapshot, skewMs, onEdit, onResetCode, 
               className="absolute right-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-white/10 bg-zinc-900/95 py-1 shadow-2xl backdrop-blur-md text-sm"
             >
               <MenuLink to={`/rooms/${room.id}/schedule`} onClick={() => setMenuOpen(false)}>Schedule</MenuLink>
+              <MenuLink to={`/rooms/${room.id}/show`} onClick={() => setMenuOpen(false)}>Show mode</MenuLink>
               <MenuLink to={`/r/${formatted}/speaker`} external onClick={() => setMenuOpen(false)}>Open speaker view</MenuLink>
               <MenuLink to={`/r/${formatted}/door`} external onClick={() => setMenuOpen(false)}>Open door view</MenuLink>
               <Divider />
@@ -136,12 +139,26 @@ export default function RoomTile({ room, snapshot, skewMs, onEdit, onResetCode, 
       </div>
 
       <footer className="relative flex items-center justify-between gap-3 pt-1">
-        <code className="font-mono text-xs tracking-wider text-zinc-500">{formatted}</code>
+        <div className="flex min-w-0 flex-col gap-1">
+          <code className="font-mono text-xs tracking-wider text-zinc-500">{formatted}</code>
+          <PresenceLine presence={presence} />
+        </div>
         <Link to={`/rooms/${room.id}`}>
           <Button size="sm">Control →</Button>
         </Link>
       </footer>
     </Card>
+  );
+}
+
+function PresenceLine({ presence }: { presence?: RoomDisplayPresence }) {
+  const speaker = presence?.speaker ?? 0;
+  const door = presence?.door ?? 0;
+  const total = speaker + door + (presence?.other ?? 0);
+  return (
+    <span className={`text-[11px] ${total > 0 ? "text-emerald-400" : "text-zinc-600"}`}>
+      {speaker} speaker · {door} door connected
+    </span>
   );
 }
 

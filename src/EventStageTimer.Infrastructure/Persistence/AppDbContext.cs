@@ -165,13 +165,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         });
 
         // Multi-tenant filters — referencing CurrentTenantId (context-instance member)
-        // so EF Core parameterizes each query with the live tenant value.
+        // so EF Core parameterizes each query with the live tenant value. Entities with a
+        // DeletedAtUtc column (Event, Room, ScheduleItem) also filter out soft-deleted
+        // rows here so soft-delete is the default everywhere; callers that need to see
+        // tombstones (audit, undo, hard-purge jobs) must use .IgnoreQueryFilters().
         b.Entity<TenantMembership>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
-        b.Entity<Event>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<Event>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId && x.DeletedAtUtc == null);
         b.Entity<EventMembership>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
         b.Entity<Invitation>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
-        b.Entity<Room>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
-        b.Entity<ScheduleItem>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<Room>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId && x.DeletedAtUtc == null);
+        b.Entity<ScheduleItem>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId && x.DeletedAtUtc == null);
         b.Entity<ScheduleItemRun>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
         b.Entity<RoomTimerState>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
         b.Entity<MessageTemplate>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
