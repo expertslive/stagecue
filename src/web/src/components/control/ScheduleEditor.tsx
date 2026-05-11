@@ -33,7 +33,9 @@ export default function ScheduleEditor({ items, onReorder, onEdit, onDelete }: P
           {items.map((item) => (
             <SortableRow key={item.id} item={item} onEdit={onEdit} onDelete={onDelete} />
           ))}
-          {items.length === 0 && <li className="p-4 text-sm text-zinc-500">No items yet.</li>}
+          {items.length === 0 && <li className="p-6 text-center text-sm text-zinc-500">
+  Plan the order of your sessions. Add the first item with the button above.
+</li>}
         </ol>
       </SortableContext>
     </DndContext>

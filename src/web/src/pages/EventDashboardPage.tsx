@@ -1,13 +1,25 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { events } from "@/api/events";
 import { rooms as roomsApi } from "@/api/rooms";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { useToast } from "@/components/ui/Toast";
+import Skeleton from "@/components/ui/Skeleton";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function EventDashboardPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const qc = useQueryClient();
   const evQuery = useQuery({ queryKey: ["event", eventId], queryFn: () => events.get(eventId!), enabled: !!eventId });
   const roomsQuery = useQuery({ queryKey: ["rooms", eventId], queryFn: () => events.rooms(eventId!), enabled: !!eventId });
+
+  const toast = useToast();
+  const [pendingRotate, setPendingRotate] = useState<
+    | { kind: "lobby" }
+    | { kind: "room"; id: string; name: string }
+    | null
+  >(null);
 
   const rotateLobby = useMutation({
     mutationFn: () => events.regenerateLobbyAccessCode(eventId!),
@@ -20,44 +32,52 @@ export default function EventDashboardPage() {
   });
 
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
-  if (evQuery.isLoading || roomsQuery.isLoading) return <div className="p-8">Loading…</div>;
+  if (evQuery.isLoading || roomsQuery.isLoading) {
+    return (
+      <div className="p-8 max-w-5xl mx-auto space-y-6">
+        <Skeleton className="h-6 w-48" />
+        <SkeletonRow count={2} />
+      </div>
+    );
+  }
   if (evQuery.error || roomsQuery.error) return <div className="p-8 text-red-400">Failed to load.</div>;
 
   const ev = evQuery.data!;
   const rooms = roomsQuery.data!;
 
-  const onRotateLobby = () => {
-    if (!confirm("Regenerate the lobby access code? Anyone using the current code will lose access.")) return;
-    rotateLobby.mutate();
-  };
-  const onRotateRoom = (roomId: string, name: string) => {
-    if (!confirm(`Regenerate the access code for "${name}"? Speaker and door screens using the current code will lose access.`)) return;
-    rotateRoom.mutate(roomId);
-  };
+  function confirmRotate() {
+    if (!pendingRotate) return;
+    if (pendingRotate.kind === "lobby") {
+      rotateLobby.mutate(undefined, {
+        onSuccess: () => toast.show({ message: "Lobby access code reset" }),
+        onError: (e: Error) => toast.show({ message: e.message, tone: "error" }),
+      });
+    } else {
+      const name = pendingRotate.name;
+      rotateRoom.mutate(pendingRotate.id, {
+        onSuccess: () => toast.show({ message: `Access code reset for ${name}` }),
+        onError: (e: Error) => toast.show({ message: e.message, tone: "error" }),
+      });
+    }
+    setPendingRotate(null);
+  }
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
-      <Link to="/" className="text-sm text-zinc-400 hover:text-zinc-200">← All events</Link>
       <div className="flex items-baseline gap-4 flex-wrap">
         <h1 className="text-2xl font-semibold">{ev.name}</h1>
         <span className="text-sm text-zinc-500">lobby code <code>{formatCode(ev.lobbyAccessCode)}</code></span>
         <button
           type="button"
-          onClick={onRotateLobby}
+          onClick={() => setPendingRotate({ kind: "lobby" })}
           disabled={rotateLobby.isPending}
           className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
         >
-          {rotateLobby.isPending ? "Regenerating…" : "Regenerate"}
+          {rotateLobby.isPending ? "Resetting…" : "Reset access code"}
         </button>
         <Link to={`/e/${formatCode(ev.lobbyAccessCode)}/lobby`} target="_blank" className="text-sm text-blue-400 hover:underline">Open lobby →</Link>
       </div>
-      <nav className="flex gap-3 text-sm border-b border-zinc-800 pb-3">
-        <Link to={`/events/${ev.id}/templates`} className="text-blue-400 hover:underline">Templates</Link>
-        <Link to={`/events/${ev.id}/branding`} className="text-blue-400 hover:underline">Branding</Link>
-        <Link to={`/events/${ev.id}/members`} className="text-blue-400 hover:underline">Members</Link>
-        <Link to={`/events/${ev.id}/audit`} className="text-blue-400 hover:underline">Audit log</Link>
-      </nav>
-      <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+<ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {rooms.map((r) => (
           <li key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 space-y-2">
             <div className="flex items-baseline justify-between">
@@ -66,11 +86,11 @@ export default function EventDashboardPage() {
                 <code className="text-xs text-zinc-500">{formatCode(r.accessCode)}</code>
                 <button
                   type="button"
-                  onClick={() => onRotateRoom(r.id, r.name)}
+                  onClick={() => setPendingRotate({ kind: "room", id: r.id, name: r.name })}
                   disabled={rotateRoom.isPending}
                   className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
                 >
-                  Regenerate
+                  Reset access code
                 </button>
               </div>
             </div>
@@ -84,6 +104,21 @@ export default function EventDashboardPage() {
         ))}
         {rooms.length === 0 && <li className="text-zinc-400">No rooms yet.</li>}
       </ul>
+      <ConfirmDialog
+        open={pendingRotate !== null}
+        tone="danger"
+        title="Reset access code?"
+        message={
+          pendingRotate?.kind === "lobby"
+            ? "The current lobby code will stop working. Anyone viewing the lobby — including signage and audience devices — will be disconnected and need the new code."
+            : pendingRotate?.kind === "room"
+              ? <>The current access code for <strong>{pendingRotate.name}</strong> will stop working. Any speaker view or door display using this code will be disconnected.</>
+              : ""
+        }
+        confirmLabel="Reset code"
+        onConfirm={confirmRotate}
+        onCancel={() => setPendingRotate(null)}
+      />
     </div>
   );
 }

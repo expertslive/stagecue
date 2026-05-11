@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { invitations } from "@/api/invitations";
 import { ApiError } from "@/api/client";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function InvitationAcceptPage() {
   const { token } = useParams<{ token: string }>();
@@ -13,7 +14,7 @@ export default function InvitationAcceptPage() {
   });
 
   if (!token) return <div className="p-8 text-red-400">Missing token.</div>;
-  if (info.isLoading) return <div className="p-8">Loading…</div>;
+  if (info.isLoading) return <div className="p-8 max-w-md mx-auto"><SkeletonRow count={2} /></div>;
   if (info.error) {
     const err = info.error as ApiError;
     if (err.status === 401) return <div className="p-8">You need to <a href={`/signin`} className="text-blue-400 hover:underline">sign in</a> with the invited email first.</div>;

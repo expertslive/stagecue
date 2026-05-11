@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { branding, type UpdateThemeBody } from "@/api/branding";
-import { defaultTheme } from "@/theme/defaults";
-
-const tokenList = Object.keys(defaultTheme);
+import ThemeTokenEditor from "@/components/branding/ThemeTokenEditor";
+import ThresholdsEditor from "@/components/control/ThresholdsEditor";
+import type { Threshold } from "@/api/types";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function BrandingPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -12,7 +13,7 @@ export default function BrandingPage() {
   const get = useQuery({ queryKey: ["branding", eventId], queryFn: () => branding.getEvent(eventId!), enabled: !!eventId });
 
   const [overrides, setOverrides] = useState<Record<string, string>>({});
-  const [thresholdsJson, setThresholdsJson] = useState<string>("[]");
+  const [defaultThresholds, setDefaultThresholds] = useState<Threshold[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [logoVersion, setLogoVersion] = useState(0);
 
@@ -22,7 +23,10 @@ export default function BrandingPage() {
       const parsed = JSON.parse(get.data.themeJson);
       setOverrides(parsed && typeof parsed === "object" ? parsed : {});
     } catch { setOverrides({}); }
-    setThresholdsJson(get.data.defaultThresholdsJson || "[]");
+    try {
+      const parsed = JSON.parse(get.data.defaultThresholdsJson || "[]");
+      setDefaultThresholds(Array.isArray(parsed) ? parsed : []);
+    } catch { setDefaultThresholds([]); }
   }, [get.data]);
 
   const save = useMutation({
@@ -46,7 +50,7 @@ export default function BrandingPage() {
   });
 
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
-  if (get.isLoading) return <div className="p-8">Loading…</div>;
+  if (get.isLoading) return <div className="p-8 max-w-2xl mx-auto"><SkeletonRow count={3} /></div>;
   if (get.error) return <div className="p-8 text-red-400">Failed to load branding.</div>;
 
   return (
@@ -72,38 +76,23 @@ export default function BrandingPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm uppercase tracking-widest text-zinc-500">Theme tokens</h2>
-        <p className="text-xs text-zinc-500">Override only the tokens you want changed; the rest fall back to defaults.</p>
-        <ul className="space-y-1">
-          {tokenList.map((k) => (
-            <li key={k} className="flex items-center gap-2">
-              <label className="flex-1 text-sm">{k}</label>
-              <input type="color" value={overrides[k] ?? defaultTheme[k]}
-                onChange={(e) => setOverrides({ ...overrides, [k]: e.target.value })}
-                className="w-12 h-8 rounded" />
-              <input type="text" value={overrides[k] ?? ""}
-                onChange={(e) => setOverrides({ ...overrides, [k]: e.target.value })}
-                placeholder={defaultTheme[k]}
-                className="w-28 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-xs font-mono" />
-              {overrides[k] && (
-                <button onClick={() => { const c = { ...overrides }; delete c[k]; setOverrides(c); }}
-                  className="text-zinc-500 hover:text-zinc-300 text-xs px-1">×</button>
-              )}
-            </li>
-          ))}
-        </ul>
+        <h2 className="text-sm uppercase tracking-widest text-zinc-500">Theme</h2>
+        <p className="text-xs text-zinc-500">Override only the colors you want changed; the rest fall back to defaults.</p>
+        <ThemeTokenEditor overrides={overrides} onChange={setOverrides} />
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm uppercase tracking-widest text-zinc-500">Default thresholds (JSON)</h2>
-        <p className="text-xs text-zinc-500">Schedule items inherit these unless they define their own.</p>
-        <textarea value={thresholdsJson} onChange={(e) => setThresholdsJson(e.target.value)}
-          rows={6} className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs" />
+        <h2 className="text-sm uppercase tracking-widest text-zinc-500">Default thresholds</h2>
+        <p className="text-xs text-zinc-500">Schedule items inherit these colors unless they override them.</p>
+        <ThresholdsEditor value={defaultThresholds} onChange={setDefaultThresholds} />
       </section>
 
       <div className="flex gap-2">
         <button
-          onClick={() => save.mutate({ themeJson: JSON.stringify(overrides), defaultThresholdsJson: thresholdsJson })}
+          onClick={() => save.mutate({
+            themeJson: JSON.stringify(overrides),
+            defaultThresholdsJson: JSON.stringify(defaultThresholds),
+          })}
           className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm">
           {save.isPending ? "Saving…" : "Save"}
         </button>

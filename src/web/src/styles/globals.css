@@ -11,8 +11,8 @@
   --danger: #e67e22;
   --final: #f1c40f;
   --overrun: #e74c3c;
-  --message-bg: #c0392b;
-  --message-text: #ffffff;
+  --message-bg: #c9b380;
+  --message-text: #0a0a0a;
 }
 
 html, body, #root {
@@ -24,4 +24,26 @@ body {
   background: var(--bg);
   color: var(--text-primary);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Smooth color transitions for the countdown across phase/threshold changes. */
+.countdown-color { transition: color 250ms ease-out; }
+
+/* Pulse used in the final 10 seconds. */
+@keyframes countdown-pulse {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.015); }
+  100% { transform: scale(1); }
+}
+.countdown-pulse { animation: countdown-pulse 1s ease-in-out infinite; }
+
+/* Visible focus ring across the app — overrides any removed outlines. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #5e9eff;
+  outline-offset: 2px;
 }

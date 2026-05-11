@@ -21,12 +21,18 @@ export default function Countdown({ snapshot, skewMs }: Props) {
   const color = isPreRoll ? "var(--accent)" : colorTokenForRemaining(tokens, remainingMs);
   const label = isPreRoll ? "Starts in" : remainingMs <= 0 ? "Overrun" : "Remaining";
 
+  // Pulse during the final 10 seconds of a Running session.
+  const pulse = snapshot.phase === "Running" && remainingMs > 0 && remainingMs <= 10_000;
+  const announce = snapshot.phase === "Running" && remainingMs > 0 && remainingMs <= 60_000;
+
   return (
     <div className="flex flex-col items-center justify-center w-full">
-      <div className="text-xs uppercase tracking-widest text-zinc-500 mb-3">{label}</div>
+      <div className="text-xs uppercase tracking-widest text-zinc-500 mb-3 transition-opacity duration-200">{label}</div>
       <div
-        className="font-bold leading-none tabular-nums"
+        className={`countdown-color font-bold leading-none tabular-nums ${pulse ? "countdown-pulse" : ""}`}
         style={{ color, fontSize: "min(28vw, 360px)", letterSpacing: "-0.04em" }}
+        aria-live={announce ? "polite" : undefined}
+        aria-atomic={announce ? "true" : undefined}
       >
         {formatRemaining(remainingMs)}
       </div>

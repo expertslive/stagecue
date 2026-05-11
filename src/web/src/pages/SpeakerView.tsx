@@ -7,6 +7,7 @@ import SessionFooter from "@/components/timer/SessionFooter";
 import { useTimerHub } from "@/hub/useTimerHub";
 import { publicInfo } from "@/api/publicInfo";
 import { useBranding } from "@/hooks/useBranding";
+import ConnectingScreen from "@/components/audience/ConnectingScreen";
 
 export default function SpeakerView() {
   const { accessCode } = useParams<{ accessCode: string }>();
@@ -24,10 +25,10 @@ export default function SpeakerView() {
 
   const { snapshot, skewMs, ready, error } = useTimerHub(roomId, normalisedCode);
 
-  if (resolveError) return <CenterMessage>{resolveError}</CenterMessage>;
-  if (!roomId) return <CenterMessage>Connecting…</CenterMessage>;
-  if (error) return <CenterMessage>Connection error: {error.message}</CenterMessage>;
-  if (!ready || !snapshot) return <CenterMessage>Connecting…</CenterMessage>;
+  if (resolveError) return <ConnectingScreen target="this room" error={resolveError} />;
+  if (!roomId) return <ConnectingScreen target="this room" />;
+  if (error) return <ConnectingScreen target="this room" error={error.message} />;
+  if (!ready || !snapshot) return <ConnectingScreen target="this room" />;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -41,10 +42,3 @@ export default function SpeakerView() {
   );
 }
 
-function CenterMessage({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-center w-full h-full">
-      <div className="text-zinc-500">{children}</div>
-    </div>
-  );
-}

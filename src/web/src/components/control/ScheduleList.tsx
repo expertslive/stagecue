@@ -20,7 +20,9 @@ export default function ScheduleList({ items, currentItemId }: Props) {
           </div>
         </li>
       ))}
-      {items.length === 0 && <li className="p-3 text-sm text-zinc-500">No items in this room's schedule.</li>}
+      {items.length === 0 && <li className="p-6 text-center text-sm text-zinc-500">
+  No sessions scheduled. Visit <strong>Schedule</strong> to add the first one.
+</li>}
     </ol>
   );
 }

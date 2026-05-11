@@ -4,6 +4,8 @@ import { useState } from "react";
 import { members, roleNumeric, type EventRoleName } from "@/api/members";
 import { invitations } from "@/api/invitations";
 import { Trash2, Copy } from "lucide-react";
+import { roleLabel, roleDescription } from "@/lib/roleLabels";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 export default function MembersPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -13,6 +15,8 @@ export default function MembersPage() {
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<EventRoleName>("Viewer");
+  const [pendingRemoveMember, setPendingRemoveMember] = useState<{ id: string; email: string } | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<{ id: string; email: string } | null>(null);
 
   const create = useMutation({
     mutationFn: () => invitations.create(eventId!, { email, role: roleNumeric[role] }),
@@ -45,13 +49,14 @@ export default function MembersPage() {
             className="flex-1 min-w-[200px] px-3 py-2 rounded bg-zinc-900 border border-zinc-800" />
           <select value={role} onChange={(e) => setRole(e.target.value as EventRoleName)}
             className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800">
-            <option value="EventAdmin">Event Admin</option>
-            <option value="RoomOperator">Room Operator</option>
-            <option value="Viewer">Viewer</option>
+            <option value="EventAdmin">{roleLabel("EventAdmin")}</option>
+            <option value="RoomOperator">{roleLabel("RoomOperator")}</option>
+            <option value="Viewer">{roleLabel("Viewer")}</option>
           </select>
           <button disabled={!email.trim() || create.isPending} onClick={() => create.mutate()}
             className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:opacity-50">Invite</button>
         </div>
+        <p className="text-xs text-zinc-500">{roleDescription(role)}</p>
       </section>
 
       <section>
@@ -60,7 +65,7 @@ export default function MembersPage() {
           {inviteQuery.data?.map((inv) => (
             <li key={inv.id} className="flex items-center gap-2 p-3">
               <div className="flex-1">
-                <div className="text-sm">{inv.email} <span className="text-zinc-500">· {inv.role}</span></div>
+                <div className="text-sm">{inv.email} <span className="text-zinc-500">· {roleLabel(inv.role as EventRoleName)}</span></div>
                 <div className="text-xs text-zinc-500">Expires {new Date(inv.expiresAt).toLocaleString()}</div>
               </div>
               {inv.emailSendFailed && <span className="text-xs text-orange-400">Email failed</span>}
@@ -68,13 +73,13 @@ export default function MembersPage() {
                 className="text-zinc-500 hover:text-zinc-300" title="Copy accept link">
                 <Copy className="size-4" />
               </button>
-              <button onClick={() => { if (confirm(`Revoke invitation to ${inv.email}?`)) revoke.mutate(inv.id); }}
+              <button onClick={() => setPendingRevoke({ id: inv.id, email: inv.email })}
                 className="text-zinc-500 hover:text-red-400">
                 <Trash2 className="size-4" />
               </button>
             </li>
           ))}
-          {inviteQuery.data?.length === 0 && <li className="p-3 text-sm text-zinc-500">No pending invitations.</li>}
+          {inviteQuery.data?.length === 0 && <li className="p-6 text-center text-sm text-zinc-500">No invitations waiting.</li>}
         </ul>
       </section>
 
@@ -90,11 +95,11 @@ export default function MembersPage() {
               <select value={m.role}
                 onChange={(e) => updateRole.mutate({ id: m.id, r: e.target.value as EventRoleName })}
                 className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-sm">
-                <option value="EventAdmin">EventAdmin</option>
-                <option value="RoomOperator">RoomOperator</option>
-                <option value="Viewer">Viewer</option>
+                <option value="EventAdmin">{roleLabel("EventAdmin")}</option>
+                <option value="RoomOperator">{roleLabel("RoomOperator")}</option>
+                <option value="Viewer">{roleLabel("Viewer")}</option>
               </select>
-              <button onClick={() => { if (confirm(`Remove ${m.email}?`)) removeMember.mutate(m.id); }}
+              <button onClick={() => setPendingRemoveMember({ id: m.id, email: m.email })}
                 className="text-zinc-500 hover:text-red-400">
                 <Trash2 className="size-4" />
               </button>
@@ -102,6 +107,30 @@ export default function MembersPage() {
           ))}
         </ul>
       </section>
+      <ConfirmDialog
+        open={pendingRemoveMember !== null}
+        tone="danger"
+        title="Remove member?"
+        message={pendingRemoveMember ? <><strong>{pendingRemoveMember.email}</strong> will lose access to this event.</> : ""}
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (pendingRemoveMember) removeMember.mutate(pendingRemoveMember.id);
+          setPendingRemoveMember(null);
+        }}
+        onCancel={() => setPendingRemoveMember(null)}
+      />
+      <ConfirmDialog
+        open={pendingRevoke !== null}
+        tone="danger"
+        title="Revoke invitation?"
+        message={pendingRevoke ? <><strong>{pendingRevoke.email}</strong> won't be able to accept this invitation anymore.</> : ""}
+        confirmLabel="Revoke"
+        onConfirm={() => {
+          if (pendingRevoke) revoke.mutate(pendingRevoke.id);
+          setPendingRevoke(null);
+        }}
+        onCancel={() => setPendingRevoke(null)}
+      />
     </div>
   );
 }

@@ -5,14 +5,20 @@ import { scheduleItems, type CreateScheduleItemBody } from "@/api/scheduleItems"
 import type { ScheduleItemDto } from "@/api/types";
 import ScheduleEditor from "@/components/control/ScheduleEditor";
 import ScheduleItemForm, { type ScheduleItemFormValues } from "@/components/control/ScheduleItemForm";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { useToast } from "@/components/ui/Toast";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function ScheduleEditorPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const qc = useQueryClient();
   const itemsQuery = useQuery({ queryKey: ["schedule", roomId], queryFn: () => scheduleItems.list(roomId!), enabled: !!roomId });
 
+  const toast = useToast();
+
   const [editing, setEditing] = useState<ScheduleItemDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ScheduleItemDto | null>(null);
 
   const reorderMutation = useMutation({
     mutationFn: (orderedIds: string[]) => scheduleItems.reorder(roomId!, orderedIds),
@@ -28,11 +34,38 @@ export default function ScheduleEditorPage() {
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => scheduleItems.remove(roomId!, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedule", roomId] }),
+    onMutate: (id: string) => {
+      // Capture the item so we can offer Undo from the closure.
+      return itemsQuery.data?.find((i) => i.id === id);
+    },
+    onSuccess: (_data, _id, ctx) => {
+      qc.invalidateQueries({ queryKey: ["schedule", roomId] });
+      const deleted = ctx as unknown as ScheduleItemDto | undefined;
+      if (!deleted) return;
+      toast.show({
+        message: `Deleted "${deleted.title}"`,
+        timeoutMs: 8000,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            await createMutation.mutateAsync({
+              title: deleted.title,
+              speakerName: deleted.speakerName,
+              scheduledStartUtc: deleted.scheduledStartUtc,
+              durationSec: deleted.durationSec,
+              preRollSec: deleted.preRollSec,
+              autoStart: deleted.autoStart,
+              thresholdsJson: deleted.thresholdsJson,
+            });
+            toast.show({ message: `Restored "${deleted.title}"` });
+          },
+        },
+      });
+    },
   });
 
   if (!roomId) return <div className="p-8 text-red-400">Missing room id.</div>;
-  if (itemsQuery.isLoading) return <div className="p-8">Loading…</div>;
+  if (itemsQuery.isLoading) return <div className="p-8 max-w-3xl mx-auto"><SkeletonRow count={3} /></div>;
   if (itemsQuery.error) return <div className="p-8 text-red-400">Failed to load schedule.</div>;
 
   return (
@@ -49,7 +82,7 @@ export default function ScheduleEditorPage() {
         items={itemsQuery.data!}
         onReorder={(ids) => reorderMutation.mutate(ids)}
         onEdit={(item) => setEditing(item)}
-        onDelete={(item) => { if (confirm(`Delete "${item.title}"?`)) deleteMutation.mutate(item.id); }}
+        onDelete={(item) => setPendingDelete(item)}
       />
 
       {creating && (
@@ -65,6 +98,18 @@ export default function ScheduleEditorPage() {
           onSubmit={async (v) => { await updateMutation.mutateAsync({ id: editing.id, body: toBody(v) }); setEditing(null); }}
         />
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        tone="danger"
+        title="Delete schedule item?"
+        message={pendingDelete ? <>This removes <strong>{pendingDelete.title}</strong> from the schedule.</> : ""}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDelete) deleteMutation.mutate(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
