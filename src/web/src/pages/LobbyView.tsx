@@ -7,6 +7,7 @@ import type { Snapshot } from "@/api/types";
 import { measureSkew } from "@/lib/clockSkew";
 import RoomCard from "@/components/audience/RoomCard";
 import { useBranding } from "@/hooks/useBranding";
+import ConnectingScreen from "@/components/audience/ConnectingScreen";
 
 export default function LobbyView() {
   const { accessCode } = useParams<{ accessCode: string }>();
@@ -32,9 +33,9 @@ export default function LobbyView() {
     return () => { cancelled = true; off(); hub.stop().catch(() => {}); };
   }, [info.data, accessCode, normalised]);
 
-  if (info.error) return <Center>URL not valid</Center>;
-  if (!info.data || !ready) return <Center>Connecting…</Center>;
-  if (error) return <Center>Connection error: {error.message}</Center>;
+  if (info.error) return <ConnectingScreen target="this event" error="URL not valid" />;
+  if (!info.data || !ready) return <ConnectingScreen target={info.data?.eventName ?? "this event"} />;
+  if (error) return <ConnectingScreen target={info.data?.eventName ?? "this event"} error={error.message} />;
 
   return (
     <div className="p-8 h-full overflow-auto">
@@ -54,6 +55,3 @@ export default function LobbyView() {
   );
 }
 
-function Center({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-center justify-center w-full h-full text-zinc-500">{children}</div>;
-}

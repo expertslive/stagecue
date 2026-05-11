@@ -4,6 +4,7 @@ import { publicInfo } from "@/api/publicInfo";
 import { useTimerHub } from "@/hub/useTimerHub";
 import { useBranding } from "@/hooks/useBranding";
 import DoorPanel from "@/components/audience/DoorPanel";
+import ConnectingScreen from "@/components/audience/ConnectingScreen";
 
 export default function DoorView() {
   const { accessCode } = useParams<{ accessCode: string }>();
@@ -12,9 +13,9 @@ export default function DoorView() {
   const { snapshot, skewMs, ready, error } = useTimerHub(info.data?.roomId ?? null, normalised);
   const { logoUrl } = useBranding(accessCode, "r");
 
-  if (info.error) return <Center>URL not valid</Center>;
-  if (!info.data || !ready || !snapshot) return <Center>Connecting…</Center>;
-  if (error) return <Center>Connection error: {error.message}</Center>;
+  if (info.error) return <ConnectingScreen target="this room" error="URL not valid" />;
+  if (!info.data || !ready || !snapshot) return <ConnectingScreen target={info.data?.roomName ?? "this room"} />;
+  if (error) return <ConnectingScreen target={info.data?.roomName ?? "this room"} error={error.message} />;
 
   return (
     <div className="w-full h-full relative">
@@ -24,6 +25,3 @@ export default function DoorView() {
   );
 }
 
-function Center({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-center justify-center w-full h-full text-zinc-500">{children}</div>;
-}
