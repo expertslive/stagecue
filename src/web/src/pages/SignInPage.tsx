@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth } from "@/api/auth";
 import { useAuthStore } from "@/state/authStore";
+import { apiErrorMessage } from "@/lib/apiErrors";
 
 export default function SignInPage() {
   const nav = useNavigate();
@@ -17,8 +18,8 @@ export default function SignInPage() {
       await auth.signIn(email, password);
       setSignedIn(email);
       nav("/");
-    } catch {
-      setError("Sign-in failed. Check email and password.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "sign-in"));
     }
   }
 
