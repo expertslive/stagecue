@@ -2,7 +2,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { rooms } from "@/api/rooms";
 import { useTimerHub } from "@/hub/useTimerHub";
-import TransportControls from "@/components/control/TransportControls";
+import TransportControlsV2 from "@/components/control/TransportControlsV2";
 import TimeAdjustments from "@/components/control/TimeAdjustments";
 import MessageInput from "@/components/control/MessageInput";
 import ScheduleList from "@/components/control/ScheduleList";
@@ -31,7 +31,7 @@ export default function RoomControlPage() {
         <Countdown snapshot={snapshot} skewMs={skewMs} />
       </div>
 
-      <TransportControls hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
+      <TransportControlsV2 hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
 
       <div>
         <h2 className="text-sm uppercase tracking-widest text-zinc-500 mb-2">Adjust time</h2>
