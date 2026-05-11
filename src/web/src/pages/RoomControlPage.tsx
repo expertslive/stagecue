@@ -7,6 +7,7 @@ import TimeAdjustments from "@/components/control/TimeAdjustments";
 import MessageInput from "@/components/control/MessageInput";
 import ScheduleList from "@/components/control/ScheduleList";
 import Countdown from "@/components/timer/Countdown";
+import CueStrip from "@/components/control/CueStrip";
 import { useToast } from "@/components/ui/Toast";
 
 export default function RoomControlPage() {
@@ -26,7 +27,7 @@ export default function RoomControlPage() {
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
       <h1 className="text-xl font-semibold">Room control</h1>
-
+      <CueStrip snapshot={snapshot} />
       <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6 flex justify-center">
         <Countdown snapshot={snapshot} skewMs={skewMs} />
       </div>
