@@ -6,8 +6,10 @@ import type { ScheduleItemDto } from "@/api/types";
 import ScheduleEditor from "@/components/control/ScheduleEditor";
 import ScheduleItemForm, { type ScheduleItemFormValues } from "@/components/control/ScheduleItemForm";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import SkeletonRow from "@/components/ui/SkeletonRow";
+import { Plus } from "lucide-react";
 
 export default function ScheduleEditorPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -71,10 +73,10 @@ export default function ScheduleEditorPage() {
   return (
     <div className="p-8 max-w-3xl mx-auto space-y-6">
       <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Schedule</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Schedule</h1>
         <div className="flex gap-3 text-sm items-center">
           <Link to={`/rooms/${roomId}`} className="text-blue-400 hover:underline">Control →</Link>
-          <button onClick={() => setCreating(true)} className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white">Add item</button>
+          <Button size="sm" leadingIcon={<Plus className="size-4" />} onClick={() => setCreating(true)}>Add item</Button>
         </div>
       </div>
 
@@ -85,19 +87,18 @@ export default function ScheduleEditorPage() {
         onDelete={(item) => setPendingDelete(item)}
       />
 
-      {creating && (
-        <ScheduleItemForm
-          onCancel={() => setCreating(false)}
-          onSubmit={async (v) => { await createMutation.mutateAsync(toBody(v)); setCreating(false); }}
-        />
-      )}
-      {editing && (
-        <ScheduleItemForm
-          initial={editing}
-          onCancel={() => setEditing(null)}
-          onSubmit={async (v) => { await updateMutation.mutateAsync({ id: editing.id, body: toBody(v) }); setEditing(null); }}
-        />
-      )}
+      <ScheduleItemForm
+        open={creating}
+        onCancel={() => setCreating(false)}
+        onSubmit={async (v) => { await createMutation.mutateAsync(toBody(v)); setCreating(false); }}
+      />
+      <ScheduleItemForm
+        open={editing !== null}
+        initial={editing ?? undefined}
+        onCancel={() => setEditing(null)}
+        onSubmit={async (v) => { if (editing) { await updateMutation.mutateAsync({ id: editing.id, body: toBody(v) }); setEditing(null); } }}
+      />
+
       <ConfirmDialog
         open={pendingDelete !== null}
         tone="danger"

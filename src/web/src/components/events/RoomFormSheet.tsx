@@ -4,6 +4,7 @@ import { rooms } from "@/api/rooms";
 import type { RoomDto } from "@/api/types";
 import Sheet from "@/components/ui/Sheet";
 import Button from "@/components/ui/Button";
+import DurationInput from "@/components/ui/DurationInput";
 import { apiErrorMessage } from "@/lib/apiErrors";
 
 interface Props {
@@ -57,15 +58,17 @@ export default function RoomFormSheet({ eventId, open, onClose, initial }: Props
             autoFocus
             value={name} onChange={(e) => setName(e.target.value)}
             placeholder="Main Stage"
-            className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800"
+            className="w-full px-3 py-2 rounded bg-zinc-950/60 border border-white/10"
           />
         </label>
         <label className="block">
-          <span className="block text-sm text-zinc-400 mb-1">Default pre-roll (seconds)</span>
-          <input
-            type="number" min={0} max={300} value={preRoll}
-            onChange={(e) => setPreRoll(parseInt(e.target.value, 10) || 0)}
-            className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 font-mono"
+          <span className="block text-sm text-zinc-400 mb-1">Default countdown before start</span>
+          <DurationInput
+            value={preRoll}
+            onChange={setPreRoll}
+            min={0}
+            max={600}
+            className="w-full"
           />
           <p className="mt-1 text-xs text-zinc-500">
             How long the audience sees a "starts in…" countdown before each session begins. Items can override this.

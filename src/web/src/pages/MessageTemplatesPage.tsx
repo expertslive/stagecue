@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useState } from "react";
 import { templates, type TemplateDto } from "@/api/messageTemplates";
 import { Pencil, Trash2 } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Button from "@/components/ui/Button";
+import SetupNav from "@/components/shell/SetupNav";
 
 export default function MessageTemplatesPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -30,30 +32,27 @@ export default function MessageTemplatesPage() {
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
 
   return (
-    <div className="p-8 max-w-2xl mx-auto space-y-6">
-      <Link to={`/events/${eventId}`} className="text-sm text-zinc-400 hover:text-zinc-200">← Event</Link>
-      <h1 className="text-2xl font-semibold">Message templates</h1>
+    <div className="p-8 max-w-2xl mx-auto">
+      <SetupNav eventId={eventId} />
+      <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Message templates</h1>
 
       <div className="flex gap-2">
         <input
           value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="New template…"
-          className="flex-1 px-3 py-2 rounded bg-zinc-900 border border-zinc-800" />
-        <button
-          disabled={!draft.trim()}
-          onClick={() => create.mutate()}
-          className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:opacity-50">Add</button>
+          className="flex-1 px-3 py-2 rounded bg-zinc-950/60 border border-white/10" />
+        <Button disabled={!draft.trim()} onClick={() => create.mutate()}>Add</Button>
       </div>
 
-      <ul className="rounded border border-zinc-800 divide-y divide-zinc-800">
+      <ul className="rounded-xl border border-white/5 divide-y divide-white/5">
         {(list.data ?? []).map((t: TemplateDto) => (
           <li key={t.id} className="flex items-center gap-2 p-3">
             {editingId === t.id ? (
               <>
                 <input value={editingText} onChange={(e) => setEditingText(e.target.value)}
-                  className="flex-1 px-2 py-1 rounded bg-zinc-900 border border-zinc-800" />
-                <button onClick={() => update.mutate({ id: t.id, text: editingText })}
-                  className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-sm">Save</button>
-                <button onClick={() => setEditingId(null)} className="text-zinc-500">Cancel</button>
+                  className="flex-1 px-2 py-1 rounded bg-zinc-950/60 border border-white/10" />
+                <Button size="sm" onClick={() => update.mutate({ id: t.id, text: editingText })}>Save</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
               </>
             ) : (
               <>
@@ -82,6 +81,7 @@ export default function MessageTemplatesPage() {
         }}
         onCancel={() => setPendingDelete(null)}
       />
+      </div>
     </div>
   );
 }

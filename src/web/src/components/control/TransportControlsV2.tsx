@@ -1,9 +1,10 @@
 import type { Snapshot } from "@/api/types";
 import type { TimerHub } from "@/hub/timerHub";
 import { Play, Pause, Square, RotateCcw, SkipForward, MoreHorizontal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { humaniseHubError } from "@/lib/hubErrors";
 import Button from "@/components/ui/Button";
+import HoldToConfirm from "@/components/ui/HoldToConfirm";
 
 interface Props {
   hub: TimerHub | null;
@@ -13,6 +14,20 @@ interface Props {
 
 export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
   const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+
+  // Click-outside dismisses the More menu.
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [overflowOpen]);
+
   if (!hub) return null;
   const v = snapshot.version;
   const phase = snapshot.phase;
@@ -21,7 +36,6 @@ export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
   const canSkip = (phase === "Running" || phase === "Paused") && snapshot.currentItem !== null;
   const canReset = phase !== "Idle" || snapshot.currentItem !== null || snapshot.currentRunId !== null;
 
-  // Determine the single dominant action for this state.
   let dominant: { label: string; onClick: () => void } | null = null;
   if (phase === "Idle" && snapshot.currentItem) {
     dominant = {
@@ -48,43 +62,73 @@ export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
   const showStop = phase === "Running" || phase === "Paused";
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex items-center gap-3">
+      {/* Dominant action — left edge. */}
       {dominant && (
-        <Button size="lg" onClick={dominant.onClick} leadingIcon={phase === "Running" ? <Pause className="size-5" /> : <Play className="size-5" />}>
-          {dominant.label}
-        </Button>
-      )}
-      {showStop && (
-        <Button size="md" variant="secondary" onClick={() => handle(hub.stopRoom(snapshot.roomId, v))} leadingIcon={<Square className="size-4" />}>
-          Stop
+        <Button
+          size="lg"
+          onClick={dominant.onClick}
+          leadingIcon={phase === "Running" ? <Pause className="size-5" /> : <Play className="size-5" />}
+          className="truncate"
+        >
+          <span className="truncate">{dominant.label}</span>
         </Button>
       )}
 
-      <div className="relative">
+      {/* More menu — middle. */}
+      <div className="relative" ref={overflowRef}>
         <Button
-          size="md" variant="ghost" onClick={() => setOverflowOpen((s) => !s)}
+          size="md"
+          variant="ghost"
+          onClick={() => setOverflowOpen((s) => !s)}
           leadingIcon={<MoreHorizontal className="size-4" />}
+          aria-haspopup="menu"
+          aria-expanded={overflowOpen}
         >
           More
         </Button>
         {overflowOpen && (
-          <div className="absolute right-0 top-full z-30 mt-1 min-w-[180px] rounded-md border border-zinc-800 bg-zinc-900 py-1 shadow-lg">
-            <OverflowItem disabled={!canSkip} onClick={() => { handle(hub.skipNext(snapshot.roomId, v)); setOverflowOpen(false); }} icon={<SkipForward className="size-4" />}>Skip to next</OverflowItem>
-            <OverflowItem disabled={!canReset} onClick={() => { handle(hub.reset(snapshot.roomId, v)); setOverflowOpen(false); }} icon={<RotateCcw className="size-4" />}>Reset room</OverflowItem>
+          <div
+            role="menu"
+            className="absolute left-0 top-full z-30 mt-1 min-w-[240px] rounded-xl border border-white/10 bg-zinc-900/95 py-1 shadow-2xl backdrop-blur-md"
+          >
+            <HoldToConfirm
+              asMenuRow
+              variant="secondary"
+              disabled={!canSkip}
+              onConfirm={() => { handle(hub.skipNext(snapshot.roomId, v)); setOverflowOpen(false); }}
+              leadingIcon={<SkipForward className="size-4" />}
+              holdingLabel="Hold to skip…"
+            >
+              Skip to next
+            </HoldToConfirm>
+            <HoldToConfirm
+              asMenuRow
+              variant="danger"
+              disabled={!canReset}
+              onConfirm={() => { handle(hub.reset(snapshot.roomId, v)); setOverflowOpen(false); }}
+              leadingIcon={<RotateCcw className="size-4" />}
+              holdingLabel="Hold to clear session…"
+            >
+              Clear current session
+            </HoldToConfirm>
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
-function OverflowItem({ icon, children, onClick, disabled }: { icon: React.ReactNode; children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button
-      onClick={onClick} disabled={disabled}
-      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {icon}{children}
-    </button>
+      {/* Stop — pinned to the right edge, maximally separated from the dominant action. */}
+      {showStop && (
+        <HoldToConfirm
+          size="md"
+          variant="secondary"
+          onConfirm={() => handle(hub.stopRoom(snapshot.roomId, v))}
+          leadingIcon={<Square className="size-4" />}
+          holdingLabel="Hold to stop…"
+          className="ml-auto"
+        >
+          Stop
+        </HoldToConfirm>
+      )}
+    </div>
   );
 }

@@ -5,7 +5,12 @@
   --surface: #161618;
   --text-primary: #e8e8e8;
   --text-muted: #aaaaaa;
-  --primary: #2ecc71;
+  /* Brand: refined SF-style green (was #2ecc71). Used for the countdown above all thresholds. */
+  --primary: #34c759;
+  /* Primary action color — used for CTAs, links, focus rings. Distinct from --primary so
+     "above threshold" (semantic) and "tap me" (interactive) never collide visually. */
+  --cta: #0a84ff;
+  --cta-hover: #409cff;
   --accent: #8ab4f8;
   --warning: #c9b380;
   --danger: #e67e22;
@@ -13,6 +18,12 @@
   --overrun: #e74c3c;
   --message-bg: #c9b380;
   --message-text: #0a0a0a;
+  --message-info-bg: #4a90c2;
+  --message-urgent-bg: #d04545;
+  /* Apple-feel easing curves. Use --ease-out for state changes that should feel decisive;
+     --ease-in-out for transitions that move both ways. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 html, body, #root {
@@ -23,11 +34,14 @@ html, body, #root {
 body {
   background: var(--bg);
   color: var(--text-primary);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, ui-sans-serif, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* Smooth color transitions for the countdown across phase/threshold changes. */
-.countdown-color { transition: color 250ms ease-out; }
+.countdown-color { transition: color 250ms var(--ease-out); }
 
 /* Pulse used in the final 10 seconds. */
 @keyframes countdown-pulse {
@@ -37,13 +51,34 @@ body {
 }
 .countdown-pulse { animation: countdown-pulse 1s ease-in-out infinite; }
 
-/* Visible focus ring across the app — overrides any removed outlines. */
+/* Phase transition: brief scale+fade when the speaker view crosses Idle/PreRoll/Running/etc. */
+@keyframes phase-enter {
+  0%   { transform: scale(0.985); opacity: 0.85; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.phase-enter { animation: phase-enter 400ms var(--ease-out); }
+
+/* Sheet entrance: backdrop fades in, panel scales+slides up. */
+@keyframes sheet-backdrop-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes sheet-panel-enter {
+  from { transform: translateY(8px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+.sheet-backdrop-enter { animation: sheet-backdrop-enter 200ms var(--ease-out); }
+.sheet-panel-enter    { animation: sheet-panel-enter 280ms var(--ease-out); }
+
+/* Visible focus ring across the app — softer Apple-style glow rather than a hard outline.
+   Falls through to outline for elements that suppress box-shadow. */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid #5e9eff;
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--cta) 30%, transparent);
+  border-radius: inherit;
 }

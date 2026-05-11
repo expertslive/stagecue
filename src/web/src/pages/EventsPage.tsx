@@ -14,7 +14,7 @@ export default function EventsPage() {
   return (
     <div className="p-8 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Events</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Events</h1>
         <Button leadingIcon={<Plus className="size-4" />} onClick={() => setCreating(true)}>New event</Button>
       </div>
 
@@ -24,7 +24,7 @@ export default function EventsPage() {
       {eventsQuery.data && eventsQuery.data.length > 0 && (
         <ul className="space-y-2">
           {eventsQuery.data.map((ev) => (
-            <li key={ev.id} className="rounded border border-zinc-800 bg-zinc-900 transition-colors hover:bg-zinc-800/60">
+            <li key={ev.id} className="rounded-xl border border-white/5 bg-zinc-900/60 backdrop-blur-sm transition-colors hover:bg-zinc-800/60">
               <Link to={`/events/${ev.id}`} className="block w-full p-4">
                 <div className="font-medium">{ev.name}</div>
                 <div className="text-xs text-zinc-400">{new Date(ev.startsAtUtc).toLocaleString()}</div>
@@ -35,7 +35,7 @@ export default function EventsPage() {
       )}
 
       {eventsQuery.data && eventsQuery.data.length === 0 && (
-        <div className="rounded-lg border border-dashed border-zinc-800 p-10 text-center">
+        <div className="rounded-xl border border-dashed border-white/10 p-10 text-center">
           <Calendar className="mx-auto size-10 text-zinc-600" />
           <h2 className="mt-3 text-lg font-medium">Create your first event</h2>
           <p className="mt-1 text-sm text-zinc-500">

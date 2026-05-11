@@ -4,8 +4,8 @@ interface Props { open: boolean; onClose: () => void }
 
 const shortcuts: Array<[string, string]> = [
   ["Space", "Pause / Resume"],
-  ["S", "Skip to next item"],
-  ["R", "Reset room"],
+  ["⇧ S", "Skip to next item (confirms)"],
+  ["⇧ R", "Clear current session (confirms)"],
   ["M", "Focus message input"],
   ["1 – 4", "Send the corresponding preset message"],
   ["?", "Show this shortcuts list"],

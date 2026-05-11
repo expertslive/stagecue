@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useState } from "react";
 import { members, roleNumeric, type EventRoleName } from "@/api/members";
 import { invitations } from "@/api/invitations";
 import { Trash2, Copy } from "lucide-react";
 import { roleLabel, roleDescription } from "@/lib/roleLabels";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Button from "@/components/ui/Button";
+import SetupNav from "@/components/shell/SetupNav";
 
 export default function MembersPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -38,30 +40,32 @@ export default function MembersPage() {
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
 
   return (
-    <div className="p-8 max-w-3xl mx-auto space-y-6">
-      <Link to={`/events/${eventId}`} className="text-sm text-zinc-400 hover:text-zinc-200">← Event</Link>
-      <h1 className="text-2xl font-semibold">Members & invitations</h1>
+    <div className="p-8 max-w-3xl mx-auto">
+      <SetupNav eventId={eventId} />
+      <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Members & invitations</h1>
 
       <section className="space-y-3">
-        <h2 className="text-sm uppercase tracking-widest text-zinc-500">Invite</h2>
+        <h2 className="text-base font-semibold text-zinc-200">Invite</h2>
         <div className="flex gap-2 items-center flex-wrap">
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com"
-            className="flex-1 min-w-[200px] px-3 py-2 rounded bg-zinc-900 border border-zinc-800" />
+            className="flex-1 min-w-[200px] px-3 py-2 rounded bg-zinc-950/60 border border-white/10" />
           <select value={role} onChange={(e) => setRole(e.target.value as EventRoleName)}
-            className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800">
+            className="px-3 py-2 rounded bg-zinc-950/60 border border-white/10">
             <option value="EventAdmin">{roleLabel("EventAdmin")}</option>
             <option value="RoomOperator">{roleLabel("RoomOperator")}</option>
             <option value="Viewer">{roleLabel("Viewer")}</option>
           </select>
-          <button disabled={!email.trim() || create.isPending} onClick={() => create.mutate()}
-            className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:opacity-50">Invite</button>
+          <Button disabled={!email.trim() || create.isPending} onClick={() => create.mutate()}>
+            Invite
+          </Button>
         </div>
         <p className="text-xs text-zinc-500">{roleDescription(role)}</p>
       </section>
 
       <section>
-        <h2 className="text-sm uppercase tracking-widest text-zinc-500 mb-2">Pending invitations</h2>
-        <ul className="rounded border border-zinc-800 divide-y divide-zinc-800">
+        <h2 className="text-base font-semibold text-zinc-200 mb-3">Pending invitations</h2>
+        <ul className="rounded-xl border border-white/5 divide-y divide-white/5">
           {inviteQuery.data?.map((inv) => (
             <li key={inv.id} className="flex items-center gap-2 p-3">
               <div className="flex-1">
@@ -84,8 +88,8 @@ export default function MembersPage() {
       </section>
 
       <section>
-        <h2 className="text-sm uppercase tracking-widest text-zinc-500 mb-2">Members</h2>
-        <ul className="rounded border border-zinc-800 divide-y divide-zinc-800">
+        <h2 className="text-base font-semibold text-zinc-200 mb-3">Members</h2>
+        <ul className="rounded-xl border border-white/5 divide-y divide-white/5">
           {memberQuery.data?.map((m) => (
             <li key={m.id} className="flex items-center gap-2 p-3">
               <div className="flex-1">
@@ -94,7 +98,7 @@ export default function MembersPage() {
               </div>
               <select value={m.role}
                 onChange={(e) => updateRole.mutate({ id: m.id, r: e.target.value as EventRoleName })}
-                className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-sm">
+                className="px-2 py-1 rounded bg-zinc-950/60 border border-white/10 text-sm">
                 <option value="EventAdmin">{roleLabel("EventAdmin")}</option>
                 <option value="RoomOperator">{roleLabel("RoomOperator")}</option>
                 <option value="Viewer">{roleLabel("Viewer")}</option>
@@ -131,6 +135,7 @@ export default function MembersPage() {
         }}
         onCancel={() => setPendingRevoke(null)}
       />
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { invitations } from "@/api/invitations";
 import { ApiError } from "@/api/client";
 import SkeletonRow from "@/components/ui/SkeletonRow";
+import Button from "@/components/ui/Button";
 
 export default function InvitationAcceptPage() {
   const { token } = useParams<{ token: string }>();
@@ -25,15 +26,12 @@ export default function InvitationAcceptPage() {
 
   return (
     <div className="p-8 max-w-md mx-auto space-y-4">
-      <h1 className="text-2xl font-semibold">Accept invitation</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Accept invitation</h1>
       <p>You've been invited to <strong>{info.data!.eventName}</strong> as <strong>{info.data!.role}</strong>.</p>
       {accept.error && <p className="text-red-400">Acceptance failed. The signed-in account may not match the invited email.</p>}
-      <button
-        disabled={accept.isPending}
-        onClick={() => accept.mutate()}
-        className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm">
+      <Button disabled={accept.isPending} onClick={() => accept.mutate()}>
         {accept.isPending ? "Accepting…" : "Accept invitation"}
-      </button>
+      </Button>
     </div>
   );
 }

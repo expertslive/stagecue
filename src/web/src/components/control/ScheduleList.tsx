@@ -7,7 +7,7 @@ interface Props {
 
 export default function ScheduleList({ items, currentItemId }: Props) {
   return (
-    <ol className="rounded border border-zinc-800 divide-y divide-zinc-800">
+    <ol className="rounded-xl border border-white/5 divide-y divide-white/5">
       {items.map((item) => (
         <li key={item.id} className={`flex justify-between p-3 ${item.id === currentItemId ? "bg-zinc-800/60" : ""}`}>
           <div>
