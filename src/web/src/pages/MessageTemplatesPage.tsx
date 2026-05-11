@@ -66,7 +66,9 @@ export default function MessageTemplatesPage() {
             )}
           </li>
         ))}
-        {list.data?.length === 0 && <li className="p-3 text-sm text-zinc-500">No templates yet.</li>}
+        {list.data?.length === 0 && <li className="p-6 text-center text-sm text-zinc-500">
+  Templates are reusable messages you can send to speakers in one tap. Try "Wrap up" or "5 min left".
+</li>}
       </ul>
       <ConfirmDialog
         open={pendingDelete !== null}

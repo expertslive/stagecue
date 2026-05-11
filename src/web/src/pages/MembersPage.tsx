@@ -79,7 +79,7 @@ export default function MembersPage() {
               </button>
             </li>
           ))}
-          {inviteQuery.data?.length === 0 && <li className="p-3 text-sm text-zinc-500">No pending invitations.</li>}
+          {inviteQuery.data?.length === 0 && <li className="p-6 text-center text-sm text-zinc-500">No invitations waiting.</li>}
         </ul>
       </section>
 
