@@ -15,15 +15,20 @@ vi.mock("@microsoft/signalr", () => {
       return {
         invoke: invokeMock,
         on: () => {},
+        onreconnecting: () => {},
+        onreconnected: () => {},
+        onclose: () => {},
         start: () => Promise.resolve(),
         stop: () => Promise.resolve(),
+        state: "Connected",
       };
     }
   }
   return {
     HubConnectionBuilder: FakeBuilder,
     HttpTransportType: { WebSockets: 1, ServerSentEvents: 2, LongPolling: 4 },
-    LogLevel: { Warning: 3 },
+    LogLevel: { Warning: 3, Critical: 5 },
+    HubConnectionState: { Disconnected: "Disconnected", Connecting: "Connecting", Connected: "Connected", Disconnecting: "Disconnecting", Reconnecting: "Reconnecting" },
   };
 });
 

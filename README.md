@@ -10,6 +10,33 @@ All five plans (backend kernel · speaker view + control · schedule editor + au
 
 See `docs/superpowers/specs/2026-05-10-event-stage-timer-design.md` for the full design and `docs/superpowers/PROGRESS.md` for the rollup.
 
+## Screenshots
+
+### Event dashboard
+Multi-room overview with audience lobby (QR + access code), pre-flight checklist, and per-room live status tiles.
+
+![Event dashboard](docs/screenshots/event-dashboard.png)
+
+### Room control surface
+Hero countdown with threshold halo, transport controls, rehearsal clock, and tabbed Adjust / Message / Schedule tools.
+
+![Room control](docs/screenshots/room-control.png)
+
+### Room details panel
+Right-side slide-in for everything per room — speaker view + door view (with inline QRs), operate links, configure, danger zone.
+
+![Room details panel](docs/screenshots/room-panel.png)
+
+### Speaker view
+The signature audience surface — full-screen countdown with session title, room footer, and clock. Threshold colours follow the schedule.
+
+![Speaker view](docs/screenshots/speaker-view.png)
+
+### Branding
+Logo + a single accent colour drive the whole product; per-token overrides live behind an advanced disclosure.
+
+![Branding setup](docs/screenshots/branding.png)
+
 ## Run locally with Docker Compose (recommended)
 
 Prereq: Docker.

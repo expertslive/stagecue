@@ -13,6 +13,14 @@ export type ToolsTabId = "adjust" | "message" | "schedule";
 interface Props {
   hub: TimerHub | null;
   snapshot: Snapshot;
+  /** False when the hub is offline. Disables set-exact-remaining; preset adjusts still queue. */
+  online: boolean;
+  /** Offline-aware adjust (queues when disconnected). */
+  onAdjustTime: (deltaSec: number) => void;
+  /** Offline-aware setMessage. */
+  onSetMessage: (text: string | null) => void;
+  /** Offline-aware clearMessage. */
+  onClearMessage: () => void;
   activeTab: ToolsTabId;
   onTabChange: (id: ToolsTabId) => void;
   scheduleItems?: ScheduleItemDto[];
@@ -22,7 +30,7 @@ interface Props {
 }
 
 const ToolsPanel = forwardRef(function ToolsPanel(
-  { hub, snapshot, activeTab, onTabChange, scheduleItems, includeScheduleTab = false, onError }: Props,
+  { hub, snapshot, online, onAdjustTime, onSetMessage, onClearMessage, activeTab, onTabChange, scheduleItems, includeScheduleTab = false, onError }: Props,
   messageInputRef: Ref<HTMLInputElement>,
 ) {
   const adjustable = snapshot.phase === "Running" || snapshot.phase === "Paused";
@@ -49,10 +57,21 @@ const ToolsPanel = forwardRef(function ToolsPanel(
       />
 
       {activeTab === "adjust" && (
-        <TimeAdjustments hub={hub} snapshot={snapshot} onError={onError} />
+        <TimeAdjustments
+          hub={hub}
+          snapshot={snapshot}
+          online={online}
+          onAdjust={onAdjustTime}
+          onError={onError}
+        />
       )}
       {activeTab === "message" && (
-        <MessageInput ref={messageInputRef} hub={hub} snapshot={snapshot} onError={onError} />
+        <MessageInput
+          ref={messageInputRef}
+          snapshot={snapshot}
+          onSetMessage={onSetMessage}
+          onClearMessage={onClearMessage}
+        />
       )}
       {activeTab === "schedule" && scheduleItems && (
         <ScheduleList items={scheduleItems} currentItemId={snapshot.currentItem?.id ?? null} />

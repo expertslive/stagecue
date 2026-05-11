@@ -14,6 +14,11 @@ public class ScheduleItem
     public int PreRollSec { get; set; }
     public bool AutoStart { get; set; }
     public string? ThresholdsJson { get; set; }
+    /// <summary>Optional binding to a <see cref="ProgrammeSlot"/>. When set, ScheduledStartUtc
+    /// and DurationSec are denormalised from the slot at attach time and re-synced on
+    /// admin-driven slot edits (cascade=update) or detached (cascade=detach).</summary>
+    public Guid? ProgrammeSlotId { get; set; }
+    public ProgrammeSlot? ProgrammeSlot { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? DeletedAtUtc { get; set; }
 

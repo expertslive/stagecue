@@ -18,6 +18,8 @@ const room: RoomDto = {
   name: "Main",
   accessCode: "HGFEDCBA",
   defaultPreRollSec: 30,
+  doorDisplayConfigJson: "{}",
+  programmeId: null,
 };
 
 const item: ScheduleItemDto = {
@@ -30,6 +32,7 @@ const item: ScheduleItemDto = {
   preRollSec: 30,
   autoStart: true,
   thresholdsJson: null,
+  programmeSlotId: null,
 };
 
 describe("evaluatePreflight", () => {
