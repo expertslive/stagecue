@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { rooms } from "@/api/rooms";
+import Skeleton from "@/components/ui/Skeleton";
 import { useTimerHub } from "@/hub/useTimerHub";
 import TransportControlsV2 from "@/components/control/TransportControlsV2";
 import TimeAdjustments from "@/components/control/TimeAdjustments";
@@ -53,7 +54,17 @@ export default function RoomControlPage() {
 
   if (!roomId) return <div className="p-8 text-red-400">Missing room id.</div>;
   if (error) return <div className="p-8 text-red-400">Connection error: {error.message}</div>;
-  if (!ready || !snapshot) return <div className="p-8">Connecting…</div>;
+  if (!ready || !snapshot) {
+    return (
+      <div className="p-8 max-w-5xl mx-auto space-y-6">
+        <Skeleton className="h-6 w-40" />
+        <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6 flex justify-center">
+          <Skeleton className="h-48 w-2/3" />
+        </div>
+        <Skeleton className="h-10 w-64" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">

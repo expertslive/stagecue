@@ -7,6 +7,7 @@ import ScheduleEditor from "@/components/control/ScheduleEditor";
 import ScheduleItemForm, { type ScheduleItemFormValues } from "@/components/control/ScheduleItemForm";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function ScheduleEditorPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -64,7 +65,7 @@ export default function ScheduleEditorPage() {
   });
 
   if (!roomId) return <div className="p-8 text-red-400">Missing room id.</div>;
-  if (itemsQuery.isLoading) return <div className="p-8">Loading…</div>;
+  if (itemsQuery.isLoading) return <div className="p-8 max-w-3xl mx-auto"><SkeletonRow count={3} /></div>;
   if (itemsQuery.error) return <div className="p-8 text-red-400">Failed to load schedule.</div>;
 
   return (

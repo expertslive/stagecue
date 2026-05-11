@@ -5,6 +5,8 @@ import { events } from "@/api/events";
 import { rooms as roomsApi } from "@/api/rooms";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import Skeleton from "@/components/ui/Skeleton";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function EventDashboardPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -30,7 +32,14 @@ export default function EventDashboardPage() {
   });
 
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
-  if (evQuery.isLoading || roomsQuery.isLoading) return <div className="p-8">Loading…</div>;
+  if (evQuery.isLoading || roomsQuery.isLoading) {
+    return (
+      <div className="p-8 max-w-5xl mx-auto space-y-6">
+        <Skeleton className="h-6 w-48" />
+        <SkeletonRow count={2} />
+      </div>
+    );
+  }
   if (evQuery.error || roomsQuery.error) return <div className="p-8 text-red-400">Failed to load.</div>;
 
   const ev = evQuery.data!;

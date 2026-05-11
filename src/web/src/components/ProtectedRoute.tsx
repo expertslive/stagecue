@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { auth } from "@/api/auth";
 import { useAuthStore } from "@/state/authStore";
 import AppShell from "@/components/shell/AppShell";
+import Skeleton from "@/components/ui/Skeleton";
 
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
   const signedIn = useAuthStore((s) => s.signedInEmail);
@@ -28,7 +29,7 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [signedIn]);
 
-  if (checking) return <div className="p-8">Loading…</div>;
+  if (checking) return <div className="p-8"><Skeleton className="h-4 w-24" /></div>;
   if (needsSetup) return <Navigate to="/setup" replace />;
   if (redirectToSignIn) return <Navigate to="/signin" replace />;
   return <AppShell>{children}</AppShell>;

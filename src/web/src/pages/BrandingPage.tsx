@@ -5,6 +5,7 @@ import { branding, type UpdateThemeBody } from "@/api/branding";
 import ThemeTokenEditor from "@/components/branding/ThemeTokenEditor";
 import ThresholdsEditor from "@/components/control/ThresholdsEditor";
 import type { Threshold } from "@/api/types";
+import SkeletonRow from "@/components/ui/SkeletonRow";
 
 export default function BrandingPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -49,7 +50,7 @@ export default function BrandingPage() {
   });
 
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
-  if (get.isLoading) return <div className="p-8">Loading…</div>;
+  if (get.isLoading) return <div className="p-8 max-w-2xl mx-auto"><SkeletonRow count={3} /></div>;
   if (get.error) return <div className="p-8 text-red-400">Failed to load branding.</div>;
 
   return (
