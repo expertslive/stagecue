@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net.Http.Json;
+using System.Text.Json.Serialization;
 
 namespace EventStageTimer.Api.Tests.Fixtures;
 
@@ -45,6 +47,12 @@ public static class AuthHelpers
                 o.Transports = HttpTransportType.LongPolling;
                 o.HttpMessageHandlerFactory = _ => new CookieAttachingHandler(cookie) { InnerHandler = factory.Server.CreateHandler() };
             })
+            .AddJsonProtocol(o =>
+            {
+                o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+                o.PayloadSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.UtcDateTimeConverter());
+                o.PayloadSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.NullableUtcDateTimeConverter());
+            })
             .Build();
     }
 
@@ -57,6 +65,12 @@ public static class AuthHelpers
             {
                 o.Transports = HttpTransportType.LongPolling;
                 o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler();
+            })
+            .AddJsonProtocol(o =>
+            {
+                o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+                o.PayloadSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.UtcDateTimeConverter());
+                o.PayloadSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.NullableUtcDateTimeConverter());
             })
             .Build();
     }

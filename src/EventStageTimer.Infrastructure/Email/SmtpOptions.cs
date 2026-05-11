@@ -8,6 +8,6 @@ public sealed class SmtpOptions
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
     public string FromAddress { get; set; } = "noreply@example.com";
-    public string FromName { get; set; } = "Event Stage Timer";
+    public string FromName { get; set; } = "Stagecue";
     public int TimeoutMs { get; set; } = 10_000;
 }

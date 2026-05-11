@@ -87,9 +87,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         // Invitation / InvitationRoom
         b.Entity<Invitation>(e =>
         {
-            e.HasIndex(x => x.Token).IsUnique();
+            e.HasIndex(x => x.TokenHash).IsUnique();
             e.Property(x => x.Email).HasMaxLength(320);
-            e.Property(x => x.Token).HasMaxLength(128);
+            e.Property(x => x.TokenHash).HasMaxLength(64);
         });
         b.Entity<InvitationRoom>(e =>
         {
@@ -151,8 +151,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         // AuthMagicLink
         b.Entity<AuthMagicLink>(e =>
         {
-            e.HasKey(x => x.Token);
-            e.Property(x => x.Token).HasMaxLength(128);
+            e.HasKey(x => x.TokenHash);
+            e.Property(x => x.TokenHash).HasMaxLength(64);
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
         });
 

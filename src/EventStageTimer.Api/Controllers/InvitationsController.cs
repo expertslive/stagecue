@@ -1,5 +1,6 @@
 using EventStageTimer.Domain.Common;
 using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Auth;
 using EventStageTimer.Infrastructure.Email;
 using EventStageTimer.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -20,7 +21,7 @@ public sealed class InvitationsController(
     IConfiguration config,
     UserManager<User> users) : ControllerBase
 {
-    public sealed record InvitationDto(Guid Id, string Email, EventRole Role, IReadOnlyList<Guid> ScopedRoomIds, DateTime ExpiresAt, DateTime? AcceptedAt, bool EmailSendFailed, string AcceptUrl);
+    public sealed record InvitationDto(Guid Id, string Email, EventRole Role, IReadOnlyList<Guid> ScopedRoomIds, DateTime ExpiresAt, DateTime? AcceptedAt, bool EmailSendFailed, string? AcceptUrl);
     public sealed record CreateBody(string Email, EventRole Role, IReadOnlyList<Guid>? ScopedRoomIds);
     public sealed record AcceptInfo(string EventName, EventRole Role);
 
@@ -28,15 +29,19 @@ public sealed class InvitationsController(
     [Authorize(Policy = "EventAdmin")]
     public async Task<IReadOnlyList<InvitationDto>> List(Guid eventId, CancellationToken ct)
     {
+        // We no longer have the raw token after creation (only the hash is stored). Include
+        // the hash in the list response only as an opaque identifier — operators reuse the
+        // accept URL surfaced at create time.
         var rows = await db.Invitations
             .Where(i => i.EventId == eventId && i.AcceptedAt == null)
             .Select(i => new
             {
-                i.Id, i.Email, i.Role, i.Token, i.ExpiresAt, i.AcceptedAt, i.EmailSendFailed,
+                i.Id, i.Email, i.Role, i.ExpiresAt, i.AcceptedAt, i.EmailSendFailed,
                 ScopedRoomIds = i.ScopedRooms.Select(s => s.RoomId).ToList(),
             }).ToListAsync(ct);
-        var baseUrl = config["App:BaseUrl"] ?? "";
-        return rows.Select(r => new InvitationDto(r.Id, r.Email, r.Role, r.ScopedRoomIds, r.ExpiresAt, r.AcceptedAt, r.EmailSendFailed, $"{baseUrl}/invitations/{r.Token}")).ToList();
+        // AcceptUrl is null on List: the raw token only exists at issue time. Operators
+        // should rely on the URL captured at create-time (or revoke + reissue).
+        return rows.Select(r => new InvitationDto(r.Id, r.Email, r.Role, r.ScopedRoomIds, r.ExpiresAt, r.AcceptedAt, r.EmailSendFailed, null)).ToList();
     }
 
     [HttpPost("events/{eventId:guid}/invitations")]
@@ -51,12 +56,19 @@ public sealed class InvitationsController(
         {
             Id = Guid.NewGuid(), TenantId = ev.TenantId, EventId = eventId,
             Email = body.Email.ToLowerInvariant(), Role = body.Role,
-            Token = token, ExpiresAt = clock.UtcNow.AddDays(7), CreatedAtUtc = clock.UtcNow,
+            TokenHash = TokenHasher.Hash(token),
+            ExpiresAt = clock.UtcNow.AddDays(7), CreatedAtUtc = clock.UtcNow,
         };
         db.Invitations.Add(inv);
-        if (body.Role == EventRole.RoomOperator && body.ScopedRoomIds is { } ids)
+        if (body.Role == EventRole.RoomOperator && body.ScopedRoomIds is { Count: > 0 } ids)
         {
-            foreach (var rid in ids)
+            // Reject IDs from other events — caller can only scope to rooms in this event.
+            var validIds = await db.Rooms
+                .Where(r => r.EventId == eventId && ids.Contains(r.Id))
+                .Select(r => r.Id).ToListAsync(ct);
+            if (validIds.Count != ids.Count)
+                return BadRequest(new { error = "InvalidRoomIds", message = "ScopedRoomIds contains rooms not in this event." });
+            foreach (var rid in validIds)
                 db.InvitationRooms.Add(new InvitationRoom { InvitationId = inv.Id, RoomId = rid });
         }
 
@@ -91,8 +103,9 @@ public sealed class InvitationsController(
     [AllowAnonymous]
     public async Task<IActionResult> GetInfo(string token, CancellationToken ct)
     {
+        var tokenHash = TokenHasher.Hash(token);
         var inv = await db.Invitations.IgnoreQueryFilters()
-            .Where(i => i.Token == token)
+            .Where(i => i.TokenHash == tokenHash)
             .Select(i => new { i.Email, i.Role, i.ExpiresAt, i.AcceptedAt, EventName = i.Event.Name })
             .FirstOrDefaultAsync(ct);
         if (inv is null) return NotFound();
@@ -105,9 +118,10 @@ public sealed class InvitationsController(
     [Authorize]
     public async Task<IActionResult> Accept(string token, CancellationToken ct)
     {
+        var tokenHash = TokenHasher.Hash(token);
         var inv = await db.Invitations.IgnoreQueryFilters()
             .Include(i => i.ScopedRooms)
-            .FirstOrDefaultAsync(i => i.Token == token, ct);
+            .FirstOrDefaultAsync(i => i.TokenHash == tokenHash, ct);
         if (inv is null) return NotFound();
         if (inv.AcceptedAt is not null) return Conflict(new { error = "AlreadyAccepted" });
         if (inv.ExpiresAt < clock.UtcNow) return Gone();

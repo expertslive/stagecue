@@ -1,4 +1,4 @@
-# Brainstorming artifacts
+# Brainstorming + planning artifacts
 .superpowers/
 
 # Vite/SPA build output
@@ -15,6 +15,11 @@ obj/
 artifacts/
 publish/
 *.pfx
+TestResults/
+coverage/
+*.coverage
+*.trx
+BenchmarkDotNet.Artifacts/
 
 # Node / React
 node_modules/
@@ -50,8 +55,11 @@ appsettings.Local.json
 *.log
 logs/
 
-# Local data
+# Local data / uploads / db files
 *.mdf
 *.ldf
 data/
 uploads/
+
+# Claude Code / agent transcripts
+.claude/

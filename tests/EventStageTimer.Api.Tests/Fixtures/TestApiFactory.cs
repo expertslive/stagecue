@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EventStageTimer.Api.Tests.Fixtures;
 
-public sealed class TestApiFactory(SqlServerFixture sql) : WebApplicationFactory<Program>
+public sealed class TestApiFactory(SqlServerFixture sql, string environmentName = "Testing", string? setupInitSecret = null) : WebApplicationFactory<Program>
 {
     public TestClock Clock { get; } = new(new DateTime(2026, 5, 10, 14, 0, 0, DateTimeKind.Utc));
 
@@ -31,17 +31,19 @@ public sealed class TestApiFactory(SqlServerFixture sql) : WebApplicationFactory
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing");
+        builder.UseEnvironment(environmentName);
 
         builder.ConfigureAppConfiguration((_, cfg) =>
         {
-            cfg.AddInMemoryCollection(new Dictionary<string, string?>
+            var dict = new Dictionary<string, string?>
             {
                 ["ConnectionStrings:Default"] = ConnectionString,
                 ["Database:AutoMigrate"] = "true",
                 ["Auth:Mode"] = "Password",
                 ["App:BaseUrl"] = "http://localhost",
-            });
+            };
+            if (setupInitSecret is not null) dict["Setup:InitSecret"] = setupInitSecret;
+            cfg.AddInMemoryCollection(dict);
         });
 
         builder.ConfigureServices(services =>

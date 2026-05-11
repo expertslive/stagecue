@@ -88,6 +88,24 @@ public sealed class EventsController(AppDbContext db, IClock clock, IAccessCodeG
         return NoContent();
     }
 
+    [HttpPost("{eventId:guid}/regenerate-lobby-access-code")]
+    [Authorize(Policy = "EventAdmin")]
+    public async Task<ActionResult<EventDto>> RegenerateLobbyAccessCode(Guid eventId, CancellationToken ct)
+    {
+        var ev = await db.Events.FirstOrDefaultAsync(e => e.Id == eventId, ct);
+        if (ev is null) return NotFound();
+        var newCode = await codes.GenerateUniqueAsync(ct);
+        ev.LobbyAccessCode = newCode.Value;
+        db.AuditLog.Add(new AuditLogEntry
+        {
+            Id = Guid.NewGuid(), TenantId = ev.TenantId,
+            EventId = eventId,
+            Action = "RegenerateLobbyAccessCode", DetailsJson = "{}", AtUtc = clock.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
+        return Ok(new EventDto(ev.Id, ev.Name, ev.TimeZone, ev.StartsAtUtc, ev.EndsAtUtc, ev.LobbyAccessCode));
+    }
+
     [HttpDelete("{eventId:guid}")]
     [Authorize(Policy = "EventAdmin")]
     public async Task<IActionResult> Delete(Guid eventId, CancellationToken ct)

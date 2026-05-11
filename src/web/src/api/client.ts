@@ -18,8 +18,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!resp.ok) {
-    let body: unknown;
-    try { body = await resp.json(); } catch { body = await resp.text(); }
+    // Read the body once as text, then try to upgrade it to JSON. Calling .json()
+    // followed by .text() on the same Response throws "body disturbed or locked"
+    // in Firefox because the stream is single-use.
+    const raw = await resp.text();
+    let body: unknown = raw;
+    if (raw.length > 0) {
+      try { body = JSON.parse(raw); } catch { /* keep raw text */ }
+    }
     throw new ApiError(resp.status, resp.statusText, body);
   }
   if (resp.status === 204) return undefined as T;

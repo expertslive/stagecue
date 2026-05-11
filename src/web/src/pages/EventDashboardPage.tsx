@@ -1,11 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { events } from "@/api/events";
+import { rooms as roomsApi } from "@/api/rooms";
 
 export default function EventDashboardPage() {
   const { eventId } = useParams<{ eventId: string }>();
+  const qc = useQueryClient();
   const evQuery = useQuery({ queryKey: ["event", eventId], queryFn: () => events.get(eventId!), enabled: !!eventId });
   const roomsQuery = useQuery({ queryKey: ["rooms", eventId], queryFn: () => events.rooms(eventId!), enabled: !!eventId });
+
+  const rotateLobby = useMutation({
+    mutationFn: () => events.regenerateLobbyAccessCode(eventId!),
+    onSuccess: (next) => qc.setQueryData(["event", eventId], next),
+  });
+
+  const rotateRoom = useMutation({
+    mutationFn: (roomId: string) => roomsApi.regenerateAccessCode(eventId!, roomId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rooms", eventId] }),
+  });
 
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
   if (evQuery.isLoading || roomsQuery.isLoading) return <div className="p-8">Loading…</div>;
@@ -14,12 +26,29 @@ export default function EventDashboardPage() {
   const ev = evQuery.data!;
   const rooms = roomsQuery.data!;
 
+  const onRotateLobby = () => {
+    if (!confirm("Regenerate the lobby access code? Anyone using the current code will lose access.")) return;
+    rotateLobby.mutate();
+  };
+  const onRotateRoom = (roomId: string, name: string) => {
+    if (!confirm(`Regenerate the access code for "${name}"? Speaker and door screens using the current code will lose access.`)) return;
+    rotateRoom.mutate(roomId);
+  };
+
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
       <Link to="/" className="text-sm text-zinc-400 hover:text-zinc-200">← All events</Link>
       <div className="flex items-baseline gap-4 flex-wrap">
         <h1 className="text-2xl font-semibold">{ev.name}</h1>
         <span className="text-sm text-zinc-500">lobby code <code>{formatCode(ev.lobbyAccessCode)}</code></span>
+        <button
+          type="button"
+          onClick={onRotateLobby}
+          disabled={rotateLobby.isPending}
+          className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
+        >
+          {rotateLobby.isPending ? "Regenerating…" : "Regenerate"}
+        </button>
         <Link to={`/e/${formatCode(ev.lobbyAccessCode)}/lobby`} target="_blank" className="text-sm text-blue-400 hover:underline">Open lobby →</Link>
       </div>
       <nav className="flex gap-3 text-sm border-b border-zinc-800 pb-3">
@@ -33,7 +62,17 @@ export default function EventDashboardPage() {
           <li key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 space-y-2">
             <div className="flex items-baseline justify-between">
               <div className="font-medium text-lg">{r.name}</div>
-              <code className="text-xs text-zinc-500">{formatCode(r.accessCode)}</code>
+              <div className="flex items-baseline gap-2">
+                <code className="text-xs text-zinc-500">{formatCode(r.accessCode)}</code>
+                <button
+                  type="button"
+                  onClick={() => onRotateRoom(r.id, r.name)}
+                  disabled={rotateRoom.isPending}
+                  className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
+                >
+                  Regenerate
+                </button>
+              </div>
             </div>
             <div className="flex gap-3 text-sm flex-wrap">
               <Link to={`/rooms/${r.id}`} className="text-blue-400 hover:underline">Control →</Link>

@@ -49,9 +49,15 @@ public sealed class MembersController(AppDbContext db) : ControllerBase
 
         m.Role = body.Role;
         m.ScopedRooms.Clear();
-        if (body.Role == EventRole.RoomOperator && body.ScopedRoomIds is { } ids)
+        if (body.Role == EventRole.RoomOperator && body.ScopedRoomIds is { Count: > 0 } ids)
         {
-            foreach (var rid in ids)
+            // Reject IDs from other events — caller can only scope to rooms in this event.
+            var validIds = await db.Rooms
+                .Where(r => r.EventId == eventId && ids.Contains(r.Id))
+                .Select(r => r.Id).ToListAsync(ct);
+            if (validIds.Count != ids.Count)
+                return BadRequest(new { error = "InvalidRoomIds", message = "ScopedRoomIds contains rooms not in this event." });
+            foreach (var rid in validIds)
                 m.ScopedRooms.Add(new EventMembershipRoom { EventMembershipId = m.Id, RoomId = rid });
         }
         await db.SaveChangesAsync(ct);

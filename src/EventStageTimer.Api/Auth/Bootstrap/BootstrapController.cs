@@ -4,6 +4,8 @@ using EventStageTimer.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace EventStageTimer.Api.Auth.Bootstrap;
 
@@ -12,7 +14,9 @@ namespace EventStageTimer.Api.Auth.Bootstrap;
 public sealed class BootstrapController(
     AppDbContext db,
     UserManager<User> users,
-    IClock clock) : ControllerBase
+    IClock clock,
+    IConfiguration config,
+    IHostEnvironment env) : ControllerBase
 {
     public sealed record SetupBody(string TenantName, string TenantSlug, string OwnerEmail, string OwnerPassword, string OwnerDisplayName);
 
@@ -26,6 +30,22 @@ public sealed class BootstrapController(
     [HttpPost("initialize")]
     public async Task<IActionResult> Initialize([FromBody] SetupBody body, CancellationToken ct)
     {
+        // Prevent tenant takeover after a DB restore / failover: in non-development environments,
+        // /initialize must present the operator-only Setup:InitSecret via the X-Setup-Secret
+        // header. Development / Testing skip the check so local bootstrap + integration tests
+        // continue to work without ceremony.
+        var configuredSecret = config["Setup:InitSecret"];
+        var requireSecret = !(env.IsDevelopment() || env.IsEnvironment("Testing"));
+        if (requireSecret)
+        {
+            if (string.IsNullOrEmpty(configuredSecret))
+                return Problem(statusCode: 503, title: "SetupNotConfigured",
+                    detail: "Setup:InitSecret must be set in production environments before /initialize can be called.");
+            var presented = Request.Headers["X-Setup-Secret"].ToString();
+            if (string.IsNullOrEmpty(presented) || !FixedTimeEquals(presented, configuredSecret))
+                return Unauthorized();
+        }
+
         if (await db.Tenants.IgnoreQueryFilters().AnyAsync(ct))
             return Conflict(new { error = "AlreadyInitialized" });
 
@@ -61,5 +81,12 @@ public sealed class BootstrapController(
 
         await db.SaveChangesAsync(ct);
         return Ok(new { tenantId = tenant.Id, userId = user.Id });
+    }
+
+    private static bool FixedTimeEquals(string a, string b)
+    {
+        var ab = Encoding.UTF8.GetBytes(a);
+        var bb = Encoding.UTF8.GetBytes(b);
+        return ab.Length == bb.Length && CryptographicOperations.FixedTimeEquals(ab, bb);
     }
 }

@@ -43,11 +43,25 @@ if (!string.IsNullOrWhiteSpace(appInsightsConnString))
     });
 }
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        // Enums (TimerPhase, EventRole, RunTriggerKind, …) as strings so the TypeScript
+        // client can compare against literal union types instead of opaque integers.
+        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        // DateTime always UTC + 'Z' suffix so browsers don't reinterpret as local time.
+        o.JsonSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.UtcDateTimeConverter());
+        o.JsonSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.NullableUtcDateTimeConverter());
+    });
 builder.Services.AddOpenApi();
 builder.Services.AddSignalR(o =>
 {
     o.EnableDetailedErrors = builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Testing";
+}).AddJsonProtocol(o =>
+{
+    o.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    o.PayloadSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.UtcDateTimeConverter());
+    o.PayloadSerializerOptions.Converters.Add(new EventStageTimer.Api.Serialization.NullableUtcDateTimeConverter());
 });
 
 // Tenancy
@@ -86,7 +100,7 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
         sql => sql.EnableRetryOnFailure(maxRetryCount: 5)));
 
 // ASP.NET Core Identity
-builder.Services.AddAppIdentity(builder.Configuration);
+builder.Services.AddAppIdentity(builder.Configuration, builder.Environment);
 
 // Authorization handlers + named policies
 builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, EventStageTimer.Api.Auth.Policies.EventAccessHandler>();
@@ -127,6 +141,26 @@ if (args.Contains("--seed"))
     return;
 }
 
+// Respect X-Forwarded-* headers from the Container Apps / reverse proxy so RemoteIpAddress,
+// scheme, and host reflect the original client request. Must run before authentication and
+// rate-limit middleware (both read the client IP).
+{
+    var fwdOpts = new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions
+    {
+        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                         | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+                         | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost,
+        ForwardLimit = null,
+    };
+    // Container Apps does not expose individual proxy IPs to the workload, so we trust any
+    // upstream proxy. If the deployment hardens this further, replace with explicit
+    // KnownProxies entries via config.
+    fwdOpts.KnownIPNetworks.Clear();
+    fwdOpts.KnownProxies.Clear();
+    app.UseForwardedHeaders(fwdOpts);
+}
+
+app.UseMiddleware<EventStageTimer.Api.Middleware.SecurityHeadersMiddleware>();
 app.UseRouting();
 app.UseStaticFiles();
 app.UseMiddleware<EventStageTimer.Api.Observability.RequestCorrelationMiddleware>();

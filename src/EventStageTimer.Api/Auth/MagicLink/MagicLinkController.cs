@@ -1,3 +1,4 @@
+using EventStageTimer.Domain.Common;
 using EventStageTimer.Domain.Entities;
 using EventStageTimer.Infrastructure.Email;
 using EventStageTimer.Infrastructure.Persistence;
@@ -8,7 +9,7 @@ namespace EventStageTimer.Api.Auth.MagicLink;
 
 [ApiController]
 [Route("api/auth/magic-link")]
-public sealed class MagicLinkController(MagicLinkService svc, UserManager<User> users, AppDbContext db) : ControllerBase
+public sealed class MagicLinkController(MagicLinkService svc, UserManager<User> users, AppDbContext db, IClock clock) : ControllerBase
 {
     public sealed record RequestBody(string Email);
 
@@ -31,6 +32,8 @@ public sealed class MagicLinkController(MagicLinkService svc, UserManager<User> 
         var user = await svc.ConsumeAsync(token, ct);
         if (user is null) return Unauthorized();
         await SignInHelper.SignInWithTenantAsync(HttpContext, db, user, ct);
+        await SignInHelper.AuditAuthAsync(db, clock, HttpContext, user.Id, "Auth.SignInSuccess",
+            "{\"method\":\"MagicLink\"}", ct);
         return Ok(new { signedIn = true });
     }
 }

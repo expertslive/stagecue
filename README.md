@@ -1,6 +1,8 @@
-# Event Stage Timer
+# Stagecue
 
 Multi-tenant SaaS-default event stage timer with self-host support. ASP.NET Core 10 + SignalR backend, React 19 + Vite frontend, SQL Server.
+
+> Internal C# namespaces are still `EventStageTimer.*` from the original working title; renaming will be done as a separate, mechanical PR.
 
 ## Status
 
@@ -73,7 +75,7 @@ Prereqs: .NET 10 SDK, Node 22+, Docker (for SQL Server only).
 
 ```bash
 # 1. Start SQL Server
-docker run -d -p 1433:1433 --name est-sql \
+docker run -d -p 1433:1433 --name stagecue-sql \
   -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Your_strong_password_123 \
   mcr.microsoft.com/mssql/server:2022-latest
 
@@ -89,7 +91,7 @@ ASPNETCORE_ENVIRONMENT=Development \
   dotnet run --project src/EventStageTimer.Api -- --urls http://localhost:5050
 ```
 
-Or run Vite dev mode for hot-reload (proxies `/api`, `/hub`, `/r`, `/e` to the .NET API):
+Or run Vite dev mode for hot-reload (proxies `/api`, `/hub`, `/r/{code}/{info,branding,ping}`, `/e/{code}/{info,branding}` to the .NET API):
 
 ```bash
 # Terminal 1: API
@@ -101,10 +103,10 @@ cd src/web && npm run dev
 ## Tests
 
 ```bash
-# Backend (44 tests; integration tests need Docker)
+# Backend — 81 tests (27 domain unit, 54 integration via Testcontainers). Needs Docker.
 dotnet test
 
-# Frontend (7 unit tests)
+# Frontend — 11 unit tests (Vitest)
 (cd src/web && npm test -- --run)
 ```
 
@@ -113,9 +115,9 @@ dotnet test
 See `deploy/azure/README.md`. In short:
 
 ```bash
-export RG=est-rg ACR=estregistry$RANDOM SQL_SERVER=est-sql-$RANDOM \
+export RG=stagecue-rg ACR=stagecueregistry$RANDOM SQL_SERVER=stagecue-sql-$RANDOM \
        SQL_ADMIN_PASSWORD="$(openssl rand -base64 24)" \
-       STORAGE_ACCOUNT=eststg$RANDOM
+       STORAGE_ACCOUNT=stagecuestg$RANDOM
 deploy/azure/deploy.sh
 ```
 
@@ -142,6 +144,12 @@ docs/
 Dockerfile                         # 3-stage: web → dotnet → runtime
 docker-compose.yml                 # self-host with SQL Server + uploads volume
 ```
+
+## License
+
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). You're free to use, modify, and self-host this software for any **noncommercial** purpose — personal use, research, education, charities, public-sector organizations, hobby events. Selling it or using it as part of a commercial offering is not permitted.
+
+If you want to use Stagecue commercially, open an issue to discuss a separate license.
 
 ## Known issues
 

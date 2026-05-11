@@ -1,6 +1,7 @@
 using EventStageTimer.Api.Tests.Fixtures;
 using EventStageTimer.Api.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -31,6 +32,21 @@ public sealed class MagicLinkAuthTests(SqlServerFixture sql) : IAsyncLifetime
         // Subsequent authenticated request succeeds (cookie attached by recorder)
         var listResp = await _http.GetAsync("/api/events");
         listResp.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Plaintext_token_is_not_stored_in_database()
+    {
+        await AuthHelpers.BootstrapTenantAsync(_http, "owner@test.local", "Strong_Pwd_123");
+        using var scope = _factory.Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<EventStageTimer.Api.Auth.MagicLink.MagicLinkService>();
+        var token = await svc.IssueAsync("owner@test.local", default);
+
+        var db = scope.ServiceProvider.GetRequiredService<EventStageTimer.Infrastructure.Persistence.AppDbContext>();
+        var rows = await db.AuthMagicLinks.IgnoreQueryFilters().ToListAsync();
+        rows.Should().HaveCount(1);
+        rows[0].TokenHash.Should().NotBe(token);
+        rows[0].TokenHash.Should().Be(EventStageTimer.Infrastructure.Auth.TokenHasher.Hash(token));
     }
 
     [Fact]

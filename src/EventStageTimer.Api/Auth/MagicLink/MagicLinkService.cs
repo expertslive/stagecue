@@ -1,5 +1,6 @@
 using EventStageTimer.Domain.Common;
 using EventStageTimer.Domain.Entities;
+using EventStageTimer.Infrastructure.Auth;
 using EventStageTimer.Infrastructure.Email;
 using EventStageTimer.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
@@ -27,7 +28,7 @@ public sealed class MagicLinkService(
 
         db.AuthMagicLinks.Add(new AuthMagicLink
         {
-            Token = token,
+            TokenHash = TokenHasher.Hash(token),
             UserId = user.Id,
             ExpiresAt = clock.UtcNow.Add(Lifetime),
         });
@@ -38,7 +39,7 @@ public sealed class MagicLinkService(
 
         await email.SendAsync(new EmailMessage(
             emailAddress,
-            "Sign in to Event Stage Timer",
+            "Sign in to Stagecue",
             $"<p>Click to sign in: <a href=\"{link}\">{link}</a></p><p>The link expires in 15 minutes.</p>",
             $"Sign in: {link}\nExpires in 15 minutes."), ct);
 
@@ -48,17 +49,18 @@ public sealed class MagicLinkService(
     public async Task<User?> ConsumeAsync(string token, CancellationToken ct)
     {
         var now = clock.UtcNow;
-        // Atomic claim: UPDATE … SET UsedAt = now WHERE Token = ? AND UsedAt IS NULL AND ExpiresAt >= now.
+        var tokenHash = TokenHasher.Hash(token);
+        // Atomic claim: UPDATE … SET UsedAt = now WHERE TokenHash = ? AND UsedAt IS NULL AND ExpiresAt >= now.
         // Only one of N concurrent requests with the same token will see rows = 1.
         var rows = await db.AuthMagicLinks
             .IgnoreQueryFilters()
-            .Where(l => l.Token == token && l.UsedAt == null && l.ExpiresAt >= now)
+            .Where(l => l.TokenHash == tokenHash && l.UsedAt == null && l.ExpiresAt >= now)
             .ExecuteUpdateAsync(setters => setters.SetProperty(l => l.UsedAt, _ => now), ct);
         if (rows == 0) return null;
 
         return await db.Users
             .IgnoreQueryFilters()
-            .Where(u => u.Id == db.AuthMagicLinks.IgnoreQueryFilters().Where(l => l.Token == token).Select(l => l.UserId).FirstOrDefault())
+            .Where(u => u.Id == db.AuthMagicLinks.IgnoreQueryFilters().Where(l => l.TokenHash == tokenHash).Select(l => l.UserId).FirstOrDefault())
             .FirstOrDefaultAsync(ct);
     }
 }
