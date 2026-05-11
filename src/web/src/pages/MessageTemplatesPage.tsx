@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useState } from "react";
 import { templates, type TemplateDto } from "@/api/messageTemplates";
 import { Pencil, Trash2 } from "lucide-react";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 export default function MessageTemplatesPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -20,6 +21,7 @@ export default function MessageTemplatesPage() {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<TemplateDto | null>(null);
   const update = useMutation({
     mutationFn: ({ id, text }: { id: string; text: string }) => templates.update(eventId!, id, text, 0),
     onSuccess: () => { setEditingId(null); qc.invalidateQueries({ queryKey: ["templates", eventId] }); },
@@ -58,7 +60,7 @@ export default function MessageTemplatesPage() {
                 <span className="flex-1">{t.text}</span>
                 <button onClick={() => { setEditingId(t.id); setEditingText(t.text); }}
                   className="text-zinc-500 hover:text-zinc-300"><Pencil className="size-4" /></button>
-                <button onClick={() => { if (confirm(`Delete "${t.text}"?`)) remove.mutate(t.id); }}
+                <button onClick={() => setPendingDelete(t)}
                   className="text-zinc-500 hover:text-red-400"><Trash2 className="size-4" /></button>
               </>
             )}
@@ -66,6 +68,18 @@ export default function MessageTemplatesPage() {
         ))}
         {list.data?.length === 0 && <li className="p-3 text-sm text-zinc-500">No templates yet.</li>}
       </ul>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        tone="danger"
+        title="Delete template?"
+        message={pendingDelete ? <>"{pendingDelete.text}" will be removed.</> : ""}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDelete) remove.mutate(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

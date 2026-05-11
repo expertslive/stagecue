@@ -5,6 +5,7 @@ import { members, roleNumeric, type EventRoleName } from "@/api/members";
 import { invitations } from "@/api/invitations";
 import { Trash2, Copy } from "lucide-react";
 import { roleLabel, roleDescription } from "@/lib/roleLabels";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 export default function MembersPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -14,6 +15,8 @@ export default function MembersPage() {
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<EventRoleName>("Viewer");
+  const [pendingRemoveMember, setPendingRemoveMember] = useState<{ id: string; email: string } | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<{ id: string; email: string } | null>(null);
 
   const create = useMutation({
     mutationFn: () => invitations.create(eventId!, { email, role: roleNumeric[role] }),
@@ -70,7 +73,7 @@ export default function MembersPage() {
                 className="text-zinc-500 hover:text-zinc-300" title="Copy accept link">
                 <Copy className="size-4" />
               </button>
-              <button onClick={() => { if (confirm(`Revoke invitation to ${inv.email}?`)) revoke.mutate(inv.id); }}
+              <button onClick={() => setPendingRevoke({ id: inv.id, email: inv.email })}
                 className="text-zinc-500 hover:text-red-400">
                 <Trash2 className="size-4" />
               </button>
@@ -96,7 +99,7 @@ export default function MembersPage() {
                 <option value="RoomOperator">{roleLabel("RoomOperator")}</option>
                 <option value="Viewer">{roleLabel("Viewer")}</option>
               </select>
-              <button onClick={() => { if (confirm(`Remove ${m.email}?`)) removeMember.mutate(m.id); }}
+              <button onClick={() => setPendingRemoveMember({ id: m.id, email: m.email })}
                 className="text-zinc-500 hover:text-red-400">
                 <Trash2 className="size-4" />
               </button>
@@ -104,6 +107,30 @@ export default function MembersPage() {
           ))}
         </ul>
       </section>
+      <ConfirmDialog
+        open={pendingRemoveMember !== null}
+        tone="danger"
+        title="Remove member?"
+        message={pendingRemoveMember ? <><strong>{pendingRemoveMember.email}</strong> will lose access to this event.</> : ""}
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (pendingRemoveMember) removeMember.mutate(pendingRemoveMember.id);
+          setPendingRemoveMember(null);
+        }}
+        onCancel={() => setPendingRemoveMember(null)}
+      />
+      <ConfirmDialog
+        open={pendingRevoke !== null}
+        tone="danger"
+        title="Revoke invitation?"
+        message={pendingRevoke ? <><strong>{pendingRevoke.email}</strong> won't be able to accept this invitation anymore.</> : ""}
+        confirmLabel="Revoke"
+        onConfirm={() => {
+          if (pendingRevoke) revoke.mutate(pendingRevoke.id);
+          setPendingRevoke(null);
+        }}
+        onCancel={() => setPendingRevoke(null)}
+      />
     </div>
   );
 }

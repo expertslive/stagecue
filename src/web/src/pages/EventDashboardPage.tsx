@@ -1,13 +1,23 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { events } from "@/api/events";
 import { rooms as roomsApi } from "@/api/rooms";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { useToast } from "@/components/ui/Toast";
 
 export default function EventDashboardPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const qc = useQueryClient();
   const evQuery = useQuery({ queryKey: ["event", eventId], queryFn: () => events.get(eventId!), enabled: !!eventId });
   const roomsQuery = useQuery({ queryKey: ["rooms", eventId], queryFn: () => events.rooms(eventId!), enabled: !!eventId });
+
+  const toast = useToast();
+  const [pendingRotate, setPendingRotate] = useState<
+    | { kind: "lobby" }
+    | { kind: "room"; id: string; name: string }
+    | null
+  >(null);
 
   const rotateLobby = useMutation({
     mutationFn: () => events.regenerateLobbyAccessCode(eventId!),
@@ -26,14 +36,22 @@ export default function EventDashboardPage() {
   const ev = evQuery.data!;
   const rooms = roomsQuery.data!;
 
-  const onRotateLobby = () => {
-    if (!confirm("Regenerate the lobby access code? Anyone using the current code will lose access.")) return;
-    rotateLobby.mutate();
-  };
-  const onRotateRoom = (roomId: string, name: string) => {
-    if (!confirm(`Regenerate the access code for "${name}"? Speaker and door screens using the current code will lose access.`)) return;
-    rotateRoom.mutate(roomId);
-  };
+  function confirmRotate() {
+    if (!pendingRotate) return;
+    if (pendingRotate.kind === "lobby") {
+      rotateLobby.mutate(undefined, {
+        onSuccess: () => toast.show({ message: "Lobby access code reset" }),
+        onError: (e: Error) => toast.show({ message: e.message, tone: "error" }),
+      });
+    } else {
+      const name = pendingRotate.name;
+      rotateRoom.mutate(pendingRotate.id, {
+        onSuccess: () => toast.show({ message: `Access code reset for ${name}` }),
+        onError: (e: Error) => toast.show({ message: e.message, tone: "error" }),
+      });
+    }
+    setPendingRotate(null);
+  }
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
@@ -43,11 +61,11 @@ export default function EventDashboardPage() {
         <span className="text-sm text-zinc-500">lobby code <code>{formatCode(ev.lobbyAccessCode)}</code></span>
         <button
           type="button"
-          onClick={onRotateLobby}
+          onClick={() => setPendingRotate({ kind: "lobby" })}
           disabled={rotateLobby.isPending}
           className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
         >
-          {rotateLobby.isPending ? "Regenerating…" : "Regenerate"}
+          {rotateLobby.isPending ? "Resetting…" : "Reset access code"}
         </button>
         <Link to={`/e/${formatCode(ev.lobbyAccessCode)}/lobby`} target="_blank" className="text-sm text-blue-400 hover:underline">Open lobby →</Link>
       </div>
@@ -66,11 +84,11 @@ export default function EventDashboardPage() {
                 <code className="text-xs text-zinc-500">{formatCode(r.accessCode)}</code>
                 <button
                   type="button"
-                  onClick={() => onRotateRoom(r.id, r.name)}
+                  onClick={() => setPendingRotate({ kind: "room", id: r.id, name: r.name })}
                   disabled={rotateRoom.isPending}
                   className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
                 >
-                  Regenerate
+                  Reset access code
                 </button>
               </div>
             </div>
@@ -84,6 +102,21 @@ export default function EventDashboardPage() {
         ))}
         {rooms.length === 0 && <li className="text-zinc-400">No rooms yet.</li>}
       </ul>
+      <ConfirmDialog
+        open={pendingRotate !== null}
+        tone="danger"
+        title="Reset access code?"
+        message={
+          pendingRotate?.kind === "lobby"
+            ? "The current lobby code will stop working. Anyone viewing the lobby — including signage and audience devices — will be disconnected and need the new code."
+            : pendingRotate?.kind === "room"
+              ? <>The current access code for <strong>{pendingRotate.name}</strong> will stop working. Any speaker view or door display using this code will be disconnected.</>
+              : ""
+        }
+        confirmLabel="Reset code"
+        onConfirm={confirmRotate}
+        onCancel={() => setPendingRotate(null)}
+      />
     </div>
   );
 }

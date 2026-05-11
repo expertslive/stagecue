@@ -5,6 +5,7 @@ import { scheduleItems, type CreateScheduleItemBody } from "@/api/scheduleItems"
 import type { ScheduleItemDto } from "@/api/types";
 import ScheduleEditor from "@/components/control/ScheduleEditor";
 import ScheduleItemForm, { type ScheduleItemFormValues } from "@/components/control/ScheduleItemForm";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 export default function ScheduleEditorPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -13,6 +14,7 @@ export default function ScheduleEditorPage() {
 
   const [editing, setEditing] = useState<ScheduleItemDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ScheduleItemDto | null>(null);
 
   const reorderMutation = useMutation({
     mutationFn: (orderedIds: string[]) => scheduleItems.reorder(roomId!, orderedIds),
@@ -49,7 +51,7 @@ export default function ScheduleEditorPage() {
         items={itemsQuery.data!}
         onReorder={(ids) => reorderMutation.mutate(ids)}
         onEdit={(item) => setEditing(item)}
-        onDelete={(item) => { if (confirm(`Delete "${item.title}"?`)) deleteMutation.mutate(item.id); }}
+        onDelete={(item) => setPendingDelete(item)}
       />
 
       {creating && (
@@ -65,6 +67,18 @@ export default function ScheduleEditorPage() {
           onSubmit={async (v) => { await updateMutation.mutateAsync({ id: editing.id, body: toBody(v) }); setEditing(null); }}
         />
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        tone="danger"
+        title="Delete schedule item?"
+        message={pendingDelete ? <>This removes <strong>{pendingDelete.title}</strong> from the schedule.</> : ""}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDelete) deleteMutation.mutate(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
