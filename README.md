@@ -147,9 +147,7 @@ docker-compose.yml                 # self-host with SQL Server + uploads volume
 
 ## License
 
-Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). You're free to use, modify, and self-host this software for any **noncommercial** purpose — personal use, research, education, charities, public-sector organizations, hobby events. Selling it or using it as part of a commercial offering is not permitted.
-
-If you want to use Stagecue commercially, open an issue to discuss a separate license.
+Licensed under the [MIT License](LICENSE). Use it, modify it, ship it — commercial or not. No warranty.
 
 ## Known issues
 

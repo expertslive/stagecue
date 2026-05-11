@@ -4,9 +4,7 @@ Thanks for your interest in Stagecue. Bug reports, fixes, and small improvements
 
 ## License of contributions
 
-By submitting a pull request, issue, comment, or any other contribution to this repository, you agree that your contribution is licensed to the project under the same [PolyForm Noncommercial License 1.0.0](LICENSE) that covers the rest of the codebase. You also confirm that you have the right to license the contribution under those terms (it's your original work, or you have permission from the rights holder).
-
-If your situation doesn't fit the above — for example, you want to contribute code that's already under a different license — please open an issue first so we can discuss.
+By submitting a pull request, issue, comment, or any other contribution to this repository, you agree that your contribution is licensed to the project under the same [MIT License](LICENSE) that covers the rest of the codebase. You also confirm that you have the right to license the contribution under those terms (it's your original work, or you have permission from the rights holder).
 
 ## How to contribute
 
@@ -31,7 +29,6 @@ If your situation doesn't fit the above — for example, you want to contribute 
 
 - Large architectural changes — please discuss in an issue first
 - New dependencies — we prefer the .NET 10 / React 19 BCL where it suffices
-- Features that obviously serve a commercial use case (the license is noncommercial; we'd rather not optimise for that path)
 
 ## Reporting security issues
 
