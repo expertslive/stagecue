@@ -26,8 +26,15 @@ export function useToast(): ToastApi {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<InternalToast[]>([]);
   const idRef = useRef(0);
+  const timerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const dismiss = useCallback((id: number) => {
+    // Clear the timeout for this toast if it exists
+    const timer = timerRef.current.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timerRef.current.delete(id);
+    }
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
@@ -36,8 +43,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const next: InternalToast = { ...spec, id };
     setToasts((prev) => [...prev, next]);
     const timeout = spec.timeoutMs ?? 4000;
-    if (timeout > 0) setTimeout(() => dismiss(id), timeout);
+    if (timeout > 0) {
+      const timerId = setTimeout(() => dismiss(id), timeout);
+      timerRef.current.set(id, timerId);
+    }
   }, [dismiss]);
+
+  // Clean up all pending timers on unmount
+  useEffect(() => {
+    return () => {
+      timerRef.current.forEach((timerId) => clearTimeout(timerId));
+      timerRef.current.clear();
+    };
+  }, []);
 
   return (
     <ToastContext.Provider value={{ show }}>
@@ -58,7 +76,7 @@ function ToastView({ toast, onDismiss }: { toast: InternalToast; onDismiss: () =
   const bg = toast.tone === "error" ? "bg-red-700" : "bg-zinc-800";
   return (
     <div
-      role="status"
+      role={toast.tone === "error" ? "alert" : "status"}
       className={`pointer-events-auto flex items-center gap-3 rounded-lg ${bg} px-4 py-2 shadow-lg transition duration-200 ease-out ${
         mounted ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
       }`}
