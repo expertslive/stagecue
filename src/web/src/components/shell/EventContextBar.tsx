@@ -8,7 +8,7 @@ import Wordmark from "@/components/shell/Wordmark";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const SETUP_SEGMENTS = ["templates", "branding", "members", "audit"];
+const SETUP_SEGMENTS = ["programmes", "templates", "branding", "members", "audit"];
 
 export default function EventContextBar() {
   const { eventId, roomId } = useParams();

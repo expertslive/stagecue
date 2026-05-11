@@ -320,6 +320,72 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.ToTable("MessageTemplates");
                 });
 
+            modelBuilder.Entity("EventStageTimer.Domain.Entities.Programme", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DeletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventId");
+
+                    b.ToTable("Programmes");
+                });
+
+            modelBuilder.Entity("EventStageTimer.Domain.Entities.ProgrammeSlot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("DurationSec")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ProgrammeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("StartUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProgrammeId", "Position");
+
+                    b.ToTable("ProgrammeSlots");
+                });
+
             modelBuilder.Entity("EventStageTimer.Domain.Entities.Room", b =>
                 {
                     b.Property<Guid>("Id")
@@ -341,6 +407,10 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("DeletedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("DoorDisplayConfigJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<Guid>("EventId")
                         .HasColumnType("uniqueidentifier");
 
@@ -348,6 +418,9 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid?>("ProgrammeId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uniqueidentifier");
@@ -358,6 +431,8 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("EventId");
+
+                    b.HasIndex("ProgrammeId");
 
                     b.ToTable("Rooms");
                 });
@@ -434,6 +509,9 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.Property<int>("PreRollSec")
                         .HasColumnType("int");
 
+                    b.Property<Guid?>("ProgrammeSlotId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid>("RoomId")
                         .HasColumnType("uniqueidentifier");
 
@@ -456,6 +534,8 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                         .HasColumnType("nvarchar(300)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ProgrammeSlotId");
 
                     b.HasIndex("RoomId", "Position");
 
@@ -866,6 +946,28 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                     b.Navigation("Event");
                 });
 
+            modelBuilder.Entity("EventStageTimer.Domain.Entities.Programme", b =>
+                {
+                    b.HasOne("EventStageTimer.Domain.Entities.Event", "Event")
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Event");
+                });
+
+            modelBuilder.Entity("EventStageTimer.Domain.Entities.ProgrammeSlot", b =>
+                {
+                    b.HasOne("EventStageTimer.Domain.Entities.Programme", "Programme")
+                        .WithMany("Slots")
+                        .HasForeignKey("ProgrammeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Programme");
+                });
+
             modelBuilder.Entity("EventStageTimer.Domain.Entities.Room", b =>
                 {
                     b.HasOne("EventStageTimer.Domain.Entities.Event", "Event")
@@ -874,7 +976,14 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("EventStageTimer.Domain.Entities.Programme", "Programme")
+                        .WithMany()
+                        .HasForeignKey("ProgrammeId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
                     b.Navigation("Event");
+
+                    b.Navigation("Programme");
                 });
 
             modelBuilder.Entity("EventStageTimer.Domain.Entities.RoomTimerState", b =>
@@ -904,11 +1013,18 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("EventStageTimer.Domain.Entities.ScheduleItem", b =>
                 {
+                    b.HasOne("EventStageTimer.Domain.Entities.ProgrammeSlot", "ProgrammeSlot")
+                        .WithMany()
+                        .HasForeignKey("ProgrammeSlotId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("EventStageTimer.Domain.Entities.Room", "Room")
                         .WithMany("ScheduleItems")
                         .HasForeignKey("RoomId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("ProgrammeSlot");
 
                     b.Navigation("Room");
                 });
@@ -1009,6 +1125,11 @@ namespace EventStageTimer.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("EventStageTimer.Domain.Entities.Invitation", b =>
                 {
                     b.Navigation("ScopedRooms");
+                });
+
+            modelBuilder.Entity("EventStageTimer.Domain.Entities.Programme", b =>
+                {
+                    b.Navigation("Slots");
                 });
 
             modelBuilder.Entity("EventStageTimer.Domain.Entities.Room", b =>

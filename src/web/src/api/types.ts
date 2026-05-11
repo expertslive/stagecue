@@ -54,6 +54,10 @@ export interface RoomDto {
   name: string;
   accessCode: string;
   defaultPreRollSec: number;
+  /** Opaque JSON; parse with parseDoorConfig() from lib/doorDisplayConfig. */
+  doorDisplayConfigJson: string;
+  /** Bound programme (event-level high-level time schedule). Null when the room schedules freely. */
+  programmeId: string | null;
 }
 
 export interface ScheduleItemDto {
@@ -66,4 +70,6 @@ export interface ScheduleItemDto {
   preRollSec: number;
   autoStart: boolean;
   thresholdsJson: string | null;
+  /** When set, this item is bound to a ProgrammeSlot; its start/duration mirror the slot. */
+  programmeSlotId: string | null;
 }

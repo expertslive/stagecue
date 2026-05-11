@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { TimerHub } from "./timerHub";
+import { TimerHub, type ConnectionState } from "./timerHub";
 import type { Snapshot } from "@/api/types";
 import { measureSkew } from "@/lib/clockSkew";
 
@@ -9,6 +9,8 @@ export interface UseTimerHubResult {
   skewMs: number;
   ready: boolean;
   error: Error | null;
+  /** Coarse-grained connection state. Drives offline indicators + command gating. */
+  connectionState: ConnectionState;
 }
 
 export function useTimerHub(roomId: string | null, accessCode: string | null, surface?: "speaker" | "door"): UseTimerHubResult {
@@ -16,6 +18,7 @@ export function useTimerHub(roomId: string | null, accessCode: string | null, su
   const [skewMs, setSkewMs] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   // Hub is created INSIDE the effect (not via useMemo) so that React 18's strict-mode
   // double-mount produces two independent hub instances instead of reusing the same one.
   // Reusing would call .start() twice on the same connection and trigger:
@@ -46,6 +49,16 @@ export function useTimerHub(roomId: string | null, accessCode: string | null, su
       if (cancelled || rid !== roomId) return;
       setSnapshot((prev) => (prev ? { ...prev, currentMessage: message } : prev));
     });
+    const offConn = h.onConnectionChange((s) => {
+      if (cancelled) return;
+      setConnectionState(s);
+      // When the hub reconnects after a drop, resync to grab any state we missed.
+      if (s === "connected") {
+        h.resync(roomId)
+          .then((fresh) => { if (!cancelled && fresh) setSnapshot(fresh); })
+          .catch(() => { /* best-effort */ });
+      }
+    });
 
     h.start()
       .then(async () => {
@@ -62,9 +75,10 @@ export function useTimerHub(roomId: string | null, accessCode: string | null, su
       cancelled = true;
       offSnap();
       offMsg();
+      offConn();
       h.stop().catch(() => { /* ignore */ });
     };
   }, [roomId, accessCode, surface]);
 
-  return { hub, snapshot, skewMs, ready, error };
+  return { hub, snapshot, skewMs, ready, error, connectionState };
 }

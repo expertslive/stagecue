@@ -1,6 +1,13 @@
 import { api } from "./client";
 
-export interface RoomInfo { roomId: string; roomName: string; eventId: string; eventName: string }
+export interface RoomInfo {
+  roomId: string;
+  roomName: string;
+  eventId: string;
+  eventName: string;
+  /** Opaque JSON; parse with parseDoorConfig() from lib/doorDisplayConfig. */
+  doorDisplayConfigJson: string;
+}
 export interface LobbyInfo { eventId: string; eventName: string; rooms: { id: string; name: string }[] }
 
 export const publicInfo = {

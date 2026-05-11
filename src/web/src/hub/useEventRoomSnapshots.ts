@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { LogLevel } from "@microsoft/signalr";
-import { TimerHub, type DisplayPresence } from "./timerHub";
+import { TimerHub, type DisplayPresence, type ConnectionState } from "./timerHub";
 import type { Snapshot } from "@/api/types";
 import { measureSkew } from "@/lib/clockSkew";
 
@@ -10,6 +10,7 @@ export interface UseEventRoomSnapshotsResult {
   skewMs: number;
   ready: boolean;
   error: Error | null;
+  connectionState: ConnectionState;
 }
 
 const emptyPresence: DisplayPresence = { lobby: 0, rooms: {} };
@@ -28,6 +29,7 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
   const [skewMs, setSkewMs] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
 
   // Stable key so the effect doesn't reconnect on every parent re-render.
   const key = useMemo(() => roomIds.slice().sort().join(","), [roomIds]);
@@ -56,6 +58,21 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
     const offPresence = hub.onPresence((changedEventId, nextPresence) => {
       if (cancelled || (eventId && changedEventId !== eventId)) return;
       setPresence(nextPresence);
+    });
+    const offConn = hub.onConnectionChange((s) => {
+      if (cancelled) return;
+      setConnectionState(s);
+      if (s === "connected") {
+        // Re-subscribe to every room after a reconnect.
+        ids.forEach((id) => {
+          hub.resync(id)
+            .then((fresh) => {
+              if (cancelled || !fresh) return;
+              setSnapshots((prev) => ({ ...prev, [fresh.roomId]: fresh }));
+            })
+            .catch(() => { /* best-effort, expected for rooms the user can't access */ });
+        });
+      }
     });
 
     hub.start()
@@ -91,9 +108,10 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
       offSnap();
       offMsg();
       offPresence();
+      offConn();
       hub.stop().catch(() => { /* ignore */ });
     };
   }, [key, eventId]);
 
-  return { snapshots, presence, skewMs, ready, error };
+  return { snapshots, presence, skewMs, ready, error, connectionState };
 }

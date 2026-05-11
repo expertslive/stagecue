@@ -9,10 +9,16 @@ import HoldToConfirm from "@/components/ui/HoldToConfirm";
 interface Props {
   hub: TimerHub | null;
   snapshot: Snapshot;
+  /** False when the hub is offline/reconnecting. Disables destructive + create-style actions. */
+  online: boolean;
+  /** Offline-aware Pause; safe to call while disconnected (queues + optimistic). */
+  onPause: () => void;
+  /** Offline-aware Resume. */
+  onResume: () => void;
   onError?: (e: string) => void;
 }
 
-export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
+export default function TransportControlsV2({ hub, snapshot, online, onPause, onResume, onError }: Props) {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
 
@@ -33,33 +39,39 @@ export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
   const phase = snapshot.phase;
   const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(humaniseHubError(e)));
 
-  const canSkip = (phase === "Running" || phase === "Paused") && snapshot.currentItem !== null;
-  const canReset = phase !== "Idle" || snapshot.currentItem !== null || snapshot.currentRunId !== null;
+  const canSkip = online && (phase === "Running" || phase === "Paused") && snapshot.currentItem !== null;
+  const canReset = online && (phase !== "Idle" || snapshot.currentItem !== null || snapshot.currentRunId !== null);
 
-  let dominant: { label: string; onClick: () => void } | null = null;
+  // Pause/Resume route through onPause/onResume so they queue when offline.
+  // Start (Idle phase) needs the server (it allocates currentRunId), so it's disabled offline.
+  let dominant: { label: string; onClick: () => void; disabled?: boolean } | null = null;
   if (phase === "Idle" && snapshot.currentItem) {
     dominant = {
       label: `Start: ${snapshot.currentItem.title}`,
       onClick: () => handle(hub.startItem(snapshot.roomId, snapshot.currentItem!.id, v)),
+      disabled: !online,
     };
   } else if (phase === "Idle" && !snapshot.currentItem) {
     dominant = {
       label: "Start next item",
       onClick: () => handle(hub.startAuto(snapshot.roomId, v)),
+      disabled: !online,
     };
   } else if (phase === "Running") {
     dominant = {
       label: "Pause",
-      onClick: () => handle(hub.pause(snapshot.roomId, v)),
+      onClick: onPause,
     };
   } else if (phase === "Paused") {
     dominant = {
       label: "Resume",
-      onClick: () => handle(hub.resume(snapshot.roomId, v)),
+      onClick: onResume,
     };
   }
 
+  // Stop requires the server (state transition + audit). Disabled offline.
   const showStop = phase === "Running" || phase === "Paused";
+  const offlineTitle = online ? undefined : "Requires connection";
 
   return (
     <div className="flex items-center gap-3">
@@ -68,6 +80,8 @@ export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
         <Button
           size="lg"
           onClick={dominant.onClick}
+          disabled={dominant.disabled}
+          title={dominant.disabled ? offlineTitle : undefined}
           leadingIcon={phase === "Running" ? <Pause className="size-5" /> : <Play className="size-5" />}
           className="truncate"
         >
@@ -125,6 +139,8 @@ export default function TransportControlsV2({ hub, snapshot, onError }: Props) {
           size="md"
           variant="secondary"
           onClick={() => handle(hub.stopRoom(snapshot.roomId, v))}
+          disabled={!online}
+          title={!online ? offlineTitle : undefined}
           leadingIcon={<Square className="size-4" />}
           className="ml-auto"
         >

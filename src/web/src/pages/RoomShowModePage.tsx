@@ -1,8 +1,10 @@
+import { useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { rooms } from "@/api/rooms";
 import { useTimerHub } from "@/hub/useTimerHub";
+import { useOfflineCommands } from "@/hub/useOfflineCommands";
 import Countdown from "@/components/timer/Countdown";
 import LiveIndicator from "@/components/timer/LiveIndicator";
 import MessageInput from "@/components/control/MessageInput";
@@ -12,6 +14,7 @@ import Skeleton from "@/components/ui/Skeleton";
 import Button from "@/components/ui/Button";
 import useRehearsalClock from "@/hooks/useRehearsalClock";
 import { useToast } from "@/components/ui/toastContext";
+import { humaniseHubError } from "@/lib/hubErrors";
 
 export default function RoomShowModePage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -20,19 +23,42 @@ export default function RoomShowModePage() {
     queryFn: () => rooms.schedule(roomId!),
     enabled: !!roomId,
   });
-  const { hub, snapshot, skewMs, ready, error } = useTimerHub(roomId ?? null, null);
+  const { hub, snapshot: serverSnapshot, skewMs, ready, error, connectionState } = useTimerHub(roomId ?? null, null);
   const rehearsal = useRehearsalClock(skewMs);
   const toast = useToast();
 
+  const handleReconcile = useCallback((synced: number, skipped: number) => {
+    if (synced === 0 && skipped === 0) return;
+    const parts: string[] = [`${synced} synced`];
+    if (skipped > 0) parts.push(`${skipped} skipped`);
+    toast.show({ message: `Reconnected · ${parts.join(", ")}` });
+  }, [toast]);
+  const handleCommandError = useCallback((e: Error) => {
+    toast.show({ message: humaniseHubError(e), tone: "error" });
+  }, [toast]);
+  const offline = useOfflineCommands({
+    hub,
+    serverSnapshot,
+    connectionState,
+    onReconcile: handleReconcile,
+    onError: handleCommandError,
+  });
+  const snapshot = offline.snapshot;
+  const isOnline = offline.online;
+  const safe = (p: Promise<unknown>) => p.catch((e) => toast.show({ message: humaniseHubError(e), tone: "error" }));
+
   if (!roomId) return <div className="p-8 text-red-400">Missing room id.</div>;
-  if (error) return <div className="p-8 text-red-400">Connection error: {error.message}</div>;
-  if (!ready || !snapshot) {
-    return (
-      <div className="p-8 space-y-6">
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
+  if (!snapshot) {
+    if (error) return <div className="p-8 text-red-400">Connection error: {error.message}</div>;
+    if (!ready) {
+      return (
+        <div className="p-8 space-y-6">
+          <Skeleton className="h-8 w-40" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      );
+    }
+    return null;
   }
 
   const effectiveSkew = rehearsal.effectiveSkewMs;
@@ -46,7 +72,11 @@ export default function RoomShowModePage() {
           <Link to={`/rooms/${roomId}`}>
             <Button variant="ghost" leadingIcon={<ArrowLeft className="size-4" />}>Control</Button>
           </Link>
-          <LiveIndicator ready={ready} hasError={error !== null} lastSnapshotUtc={snapshot.serverNowUtc} />
+          <LiveIndicator
+            connectionState={connectionState}
+            queuedCount={offline.queuedCount}
+            lastSnapshotUtc={serverSnapshot?.serverNowUtc ?? null}
+          />
         </header>
 
         <section className="grid min-h-[520px] grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
@@ -67,7 +97,14 @@ export default function RoomShowModePage() {
           </div>
 
           <aside className="flex flex-col gap-4">
-            <TransportControlsV2 hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
+            <TransportControlsV2
+              hub={hub}
+              snapshot={snapshot}
+              online={isOnline}
+              onPause={() => safe(offline.pause())}
+              onResume={() => safe(offline.resume())}
+              onError={(m) => toast.show({ message: m, tone: "error" })}
+            />
             <RehearsalControls
               enabled={rehearsal.enabled}
               speed={rehearsal.speed}
@@ -75,7 +112,11 @@ export default function RoomShowModePage() {
               onStop={rehearsal.stop}
             />
             <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-              <MessageInput hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
+              <MessageInput
+                snapshot={snapshot}
+                onSetMessage={(text) => safe(offline.setMessage(text))}
+                onClearMessage={() => safe(offline.clearMessage())}
+              />
             </div>
             <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
               <h2 className="text-sm font-medium text-zinc-200">Upcoming</h2>

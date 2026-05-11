@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { publicInfo } from "@/api/publicInfo";
-import { TimerHub } from "@/hub/timerHub";
+import { TimerHub, type ConnectionState } from "@/hub/timerHub";
 import type { Snapshot } from "@/api/types";
 import { measureSkew } from "@/lib/clockSkew";
 import RoomCard from "@/components/audience/RoomCard";
 import { useBranding } from "@/hooks/useBranding";
 import ConnectingScreen from "@/components/audience/ConnectingScreen";
+import OfflineBanner from "@/components/audience/OfflineBanner";
 
 export default function LobbyView() {
   const { accessCode } = useParams<{ accessCode: string }>();
@@ -19,6 +20,7 @@ export default function LobbyView() {
   const [skewMs, setSkewMs] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
 
   useEffect(() => {
     if (!info.data || !accessCode) return;
@@ -29,16 +31,24 @@ export default function LobbyView() {
       setSnapshots((prev) => ({ ...prev, [snap.roomId]: snap }));
       setSkewMs(measureSkew(snap.serverNowUtc));
     });
+    const offConn = hub.onConnectionChange((s) => {
+      if (cancelled) return;
+      setConnectionState(s);
+    });
     hub.start().then(() => { if (!cancelled) setReady(true); }).catch((e) => { if (!cancelled) setError(e as Error); });
-    return () => { cancelled = true; off(); hub.stop().catch(() => {}); };
+    return () => { cancelled = true; off(); offConn(); hub.stop().catch(() => {}); };
   }, [info.data, accessCode, normalised]);
 
   if (info.error) return <ConnectingScreen target="this event" error="URL not valid" />;
-  if (!info.data || !ready) return <ConnectingScreen target={info.data?.eventName ?? "this event"} />;
-  if (error) return <ConnectingScreen target={info.data?.eventName ?? "this event"} error={error.message} />;
+  // Hold the last-known snapshots through reconnects so the lobby keeps ticking.
+  if (!info.data) return <ConnectingScreen target="this event" />;
+  if (!ready && Object.keys(snapshots).length === 0) {
+    if (error) return <ConnectingScreen target={info.data.eventName ?? "this event"} error={error.message} />;
+    return <ConnectingScreen target={info.data.eventName ?? "this event"} />;
+  }
 
   return (
-    <div className="p-8 h-full overflow-auto">
+    <div className="p-8 h-full overflow-auto relative">
       <div className="flex items-start justify-between mb-6">
         <div>
           <div className="text-sm uppercase tracking-widest text-zinc-500">{info.data.eventName}</div>
@@ -51,6 +61,7 @@ export default function LobbyView() {
           <RoomCard key={r.id} roomName={r.name} snapshot={snapshots[r.id]} skewMs={skewMs} />
         ))}
       </div>
+      <OfflineBanner connectionState={connectionState} />
     </div>
   );
 }

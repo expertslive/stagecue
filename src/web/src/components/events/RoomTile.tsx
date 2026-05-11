@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { MoreHorizontal, Play, Pause, Hourglass } from "lucide-react";
 import type { RoomDto, Snapshot } from "@/api/types";
@@ -13,36 +13,23 @@ interface Props {
   snapshot: Snapshot | undefined;
   presence?: RoomDisplayPresence;
   skewMs: number;
-  onEdit: (room: RoomDto) => void;
-  onResetCode: (room: RoomDto) => void;
-  onDelete: (room: RoomDto) => void;
+  /** Open the slide-in detail panel that holds every per-room action (Speaker view, Door
+   *  view + config, Show mode, Schedule, room settings, reset code, delete). */
+  onOpenPanel: (room: RoomDto) => void;
 }
 
 /**
- * Live status tile for a room on the event dashboard. Subscribes (via the parent)
- * to the room's snapshot and renders phase + current/next + countdown, with the
- * Control button as the dominant action and a ⋯ menu for everything else.
+ * Live status tile for a room on the event dashboard. The Control button stays as the
+ * dominant CTA. The "⋯" button now opens a richer slide-in panel rather than a cramped
+ * dropdown — see RoomPanel.
  */
-export default function RoomTile({ room, snapshot, presence, skewMs, onEdit, onResetCode, onDelete }: Props) {
-  const [menuOpen, setMenuOpen] = useState(false);
+export default function RoomTile({ room, snapshot, presence, skewMs, onOpenPanel }: Props) {
   const [, setTick] = useState(0);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const id = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, []);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [menuOpen]);
 
   const formatted = room.accessCode.length === 8
     ? `${room.accessCode.slice(0, 4)}-${room.accessCode.slice(4)}`
@@ -77,34 +64,15 @@ export default function RoomTile({ room, snapshot, presence, skewMs, onEdit, onR
             </h3>
           </div>
         </div>
-        <div className="relative shrink-0" ref={menuRef}>
-          <button
-            type="button"
-            onClick={() => setMenuOpen((o) => !o)}
-            className="rounded-md p-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-            aria-label={`More actions for ${room.name}`}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-          >
-            <MoreHorizontal className="size-4" />
-          </button>
-          {menuOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-white/10 bg-zinc-900/95 py-1 shadow-2xl backdrop-blur-md text-sm"
-            >
-              <MenuLink to={`/rooms/${room.id}/schedule`} onClick={() => setMenuOpen(false)}>Schedule</MenuLink>
-              <MenuLink to={`/rooms/${room.id}/show`} onClick={() => setMenuOpen(false)}>Show mode</MenuLink>
-              <MenuLink to={`/r/${formatted}/speaker`} external onClick={() => setMenuOpen(false)}>Open speaker view</MenuLink>
-              <MenuLink to={`/r/${formatted}/door`} external onClick={() => setMenuOpen(false)}>Open door view</MenuLink>
-              <Divider />
-              <MenuButton onClick={() => { setMenuOpen(false); onEdit(room); }}>Edit room…</MenuButton>
-              <MenuButton onClick={() => { setMenuOpen(false); onResetCode(room); }}>Reset access code…</MenuButton>
-              <Divider />
-              <MenuButton onClick={() => { setMenuOpen(false); onDelete(room); }} danger>Delete room…</MenuButton>
-            </div>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => onOpenPanel(room)}
+          className="shrink-0 rounded-md p-1.5 text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
+          aria-label={`Open details panel for ${room.name}`}
+          title="Room details & actions"
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
       </header>
 
       {/* Live body */}
@@ -143,9 +111,12 @@ export default function RoomTile({ room, snapshot, presence, skewMs, onEdit, onR
           <code className="font-mono text-xs tracking-wider text-zinc-500">{formatted}</code>
           <PresenceLine presence={presence} />
         </div>
-        <Link to={`/rooms/${room.id}`}>
-          <Button size="sm">Control →</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={() => onOpenPanel(room)}>Details</Button>
+          <Link to={`/rooms/${room.id}`}>
+            <Button size="sm">Control →</Button>
+          </Link>
+        </div>
       </footer>
     </Card>
   );
@@ -162,7 +133,7 @@ function PresenceLine({ presence }: { presence?: RoomDisplayPresence }) {
   );
 }
 
-/* -------------------- chip / menu helpers -------------------- */
+/* -------------------- chip helpers -------------------- */
 
 type DerivedStatus =
   | { kind: "running"; title: string | null; speaker: string | null; timer: string; haloColor: string }
@@ -235,36 +206,6 @@ function StatusChip({ status }: { status: DerivedStatus }) {
       {m.label}
     </span>
   );
-}
-
-function MenuLink({ to, external, onClick, children }: { to: string; external?: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <Link
-      to={to}
-      target={external ? "_blank" : undefined}
-      rel={external ? "noopener" : undefined}
-      onClick={onClick}
-      className="block px-3 py-2 text-zinc-200 hover:bg-white/5"
-    >
-      {children}
-    </Link>
-  );
-}
-
-function MenuButton({ onClick, danger, children }: { onClick: () => void; danger?: boolean; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`block w-full px-3 py-2 text-left ${danger ? "text-red-400 hover:bg-red-500/10" : "text-zinc-200 hover:bg-white/5"}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Divider() {
-  return <div aria-hidden="true" className="my-1 border-t border-white/5" />;
 }
 
 function relativeUntil(ms: number): string {

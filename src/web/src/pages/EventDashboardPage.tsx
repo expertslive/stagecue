@@ -17,6 +17,9 @@ import { useToast } from "@/components/ui/toastContext";
 import Skeleton from "@/components/ui/Skeleton";
 import SkeletonRow from "@/components/ui/SkeletonRow";
 import RoomFormSheet from "@/components/events/RoomFormSheet";
+import DoorDisplaySettingsSheet from "@/components/events/DoorDisplaySettingsSheet";
+import RoomPanel from "@/components/events/RoomPanel";
+import { apiErrorMessage } from "@/lib/apiErrors";
 import { Plus, DoorOpen } from "lucide-react";
 
 export default function EventDashboardPage() {
@@ -33,7 +36,10 @@ export default function EventDashboardPage() {
   >(null);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomDto | null>(null);
+  const [configuringDoor, setConfiguringDoor] = useState<RoomDto | null>(null);
   const [pendingDeleteRoom, setPendingDeleteRoom] = useState<RoomDto | null>(null);
+  /** Which room's slide-in details panel is open, if any. */
+  const [openPanelRoom, setOpenPanelRoom] = useState<RoomDto | null>(null);
 
   const roomIds = roomsQuery.data?.map((r) => r.id) ?? [];
   const { snapshots, presence, skewMs } = useEventRoomSnapshots(roomIds, eventId);
@@ -51,6 +57,16 @@ export default function EventDashboardPage() {
   const deleteRoom = useMutation({
     mutationFn: (roomId: string) => roomsApi.remove(eventId!, roomId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rooms", eventId] }),
+  });
+
+  const updateDoorConfig = useMutation({
+    mutationFn: ({ roomId, json }: { roomId: string; json: string }) =>
+      roomsApi.updateDoorConfig(eventId!, roomId, json),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rooms", eventId] });
+      toast.show({ message: "Door display updated." });
+    },
+    onError: (e) => toast.show({ message: apiErrorMessage(e), tone: "error" }),
   });
 
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
@@ -137,9 +153,7 @@ export default function EventDashboardPage() {
                 snapshot={snapshots[r.id]}
                 presence={presence.rooms[r.id]}
                 skewMs={skewMs}
-                onEdit={setEditingRoom}
-                onResetCode={(room) => setPendingRotate({ kind: "room", id: room.id, name: room.name })}
-                onDelete={setPendingDeleteRoom}
+                onOpenPanel={setOpenPanelRoom}
               />
             ))}
             <AddRoomTile onClick={() => setCreatingRoom(true)} />
@@ -185,6 +199,28 @@ export default function EventDashboardPage() {
         open={editingRoom !== null}
         initial={editingRoom ?? undefined}
         onClose={() => setEditingRoom(null)}
+      />
+
+      <DoorDisplaySettingsSheet
+        open={configuringDoor !== null}
+        room={configuringDoor}
+        onClose={() => setConfiguringDoor(null)}
+        onSubmit={async (json) => {
+          if (!configuringDoor) return;
+          await updateDoorConfig.mutateAsync({ roomId: configuringDoor.id, json });
+        }}
+      />
+
+      <RoomPanel
+        open={openPanelRoom !== null}
+        room={openPanelRoom}
+        snapshot={openPanelRoom ? snapshots[openPanelRoom.id] : undefined}
+        skewMs={skewMs}
+        onClose={() => setOpenPanelRoom(null)}
+        onEdit={(room) => { setEditingRoom(room); setOpenPanelRoom(null); }}
+        onConfigureDoor={(room) => { setConfiguringDoor(room); setOpenPanelRoom(null); }}
+        onResetCode={(room) => { setPendingRotate({ kind: "room", id: room.id, name: room.name }); setOpenPanelRoom(null); }}
+        onDelete={(room) => { setPendingDeleteRoom(room); setOpenPanelRoom(null); }}
       />
     </div>
   );

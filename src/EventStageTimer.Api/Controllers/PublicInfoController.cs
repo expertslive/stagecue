@@ -10,7 +10,7 @@ namespace EventStageTimer.Api.Controllers;
 [Authorize(AuthenticationSchemes = PublicAccessCodeAuthHandler.SchemeName)]
 public sealed class PublicInfoController(PublicAccessContext ctx, AppDbContext db) : ControllerBase
 {
-    public sealed record RoomInfo(Guid RoomId, string RoomName, Guid EventId, string EventName);
+    public sealed record RoomInfo(Guid RoomId, string RoomName, Guid EventId, string EventName, string DoorDisplayConfigJson);
     public sealed record LobbyInfo(Guid EventId, string EventName, IReadOnlyList<LobbyRoom> Rooms);
     public sealed record LobbyRoom(Guid Id, string Name);
 
@@ -21,7 +21,7 @@ public sealed class PublicInfoController(PublicAccessContext ctx, AppDbContext d
         var info = await db.Rooms
             .IgnoreQueryFilters()
             .Where(r => r.Id == rid)
-            .Select(r => new RoomInfo(r.Id, r.Name, r.EventId, r.Event.Name))
+            .Select(r => new RoomInfo(r.Id, r.Name, r.EventId, r.Event.Name, r.DoorDisplayConfigJson))
             .FirstOrDefaultAsync(ct);
         return info is null ? NotFound() : Ok(info);
     }

@@ -8,6 +8,7 @@ import { useTimerHub } from "@/hub/useTimerHub";
 import { publicInfo } from "@/api/publicInfo";
 import { useBranding } from "@/hooks/useBranding";
 import ConnectingScreen from "@/components/audience/ConnectingScreen";
+import OfflineBanner from "@/components/audience/OfflineBanner";
 
 export default function SpeakerView() {
   const { accessCode } = useParams<{ accessCode: string }>();
@@ -25,12 +26,17 @@ export default function SpeakerView() {
       .catch((e) => setResolveError(String((e as Error).message ?? e)));
   }, [accessCode]);
 
-  const { snapshot, skewMs, ready, error } = useTimerHub(roomId, normalisedCode, "speaker");
+  const { snapshot, skewMs, ready, error, connectionState } = useTimerHub(roomId, normalisedCode, "speaker");
 
   if (resolveError) return <ConnectingScreen target="this room" error={resolveError} />;
   if (!roomId) return <ConnectingScreen target="this room" />;
-  if (error) return <ConnectingScreen target="this room" error={error.message} />;
-  if (!ready || !snapshot) return <ConnectingScreen target="this room" />;
+  // Show ConnectingScreen only on first-load failures / initial connect. Once we have a snapshot,
+  // we hold on to it through reconnects so the countdown keeps ticking through venue Wi-Fi blips.
+  if (!snapshot) {
+    if (error) return <ConnectingScreen target="this room" error={error.message} />;
+    if (!ready) return <ConnectingScreen target="this room" />;
+  }
+  if (!snapshot) return <ConnectingScreen target="this room" />;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -43,6 +49,7 @@ export default function SpeakerView() {
       <MessageOverlay message={snapshot.currentMessage} />
       <SessionFooter next={snapshot.nextItem} />
       <RoomBadge eventName={eventName} roomName={roomName} />
+      <OfflineBanner connectionState={connectionState} />
     </div>
   );
 }
