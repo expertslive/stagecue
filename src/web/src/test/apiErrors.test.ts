@@ -23,4 +23,35 @@ describe("apiErrorMessage", () => {
     const err = new ApiError(404, "Not Found");
     expect(apiErrorMessage(err)).toBeTruthy();
   });
+  it("surfaces Identity validation errors from the body", () => {
+    const err = new ApiError(400, "Bad Request", {
+      errors: [
+        { code: "PasswordTooShort", description: "Passwords must be at least 10 characters." },
+        { code: "PasswordRequiresDigit", description: "Passwords must have at least one digit." },
+      ],
+    });
+    const msg = apiErrorMessage(err);
+    expect(msg).toMatch(/at least 10 characters/);
+    expect(msg).toMatch(/at least one digit/);
+  });
+  it("surfaces ModelState validation errors from the body", () => {
+    const err = new ApiError(400, "Bad Request", {
+      errors: {
+        Email: ["Email is required."],
+        Name: ["Name is required.", "Name must be at most 80 characters."],
+      },
+    });
+    const msg = apiErrorMessage(err);
+    expect(msg).toMatch(/email is required/i);
+    expect(msg).toMatch(/name is required/i);
+    expect(msg).toMatch(/at most 80 characters/i);
+  });
+  it("humanises short error codes like AlreadyInitialized", () => {
+    const err = new ApiError(409, "Conflict", { error: "AlreadyInitialized" });
+    expect(apiErrorMessage(err)).toBe("Already initialized.");
+  });
+  it("falls back to friendly 400 copy when body has no structured errors", () => {
+    const err = new ApiError(400, "Bad Request", "some unparseable text");
+    expect(apiErrorMessage(err)).toMatch(/check the form/i);
+  });
 });
