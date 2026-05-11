@@ -1,13 +1,14 @@
 import type { Snapshot } from "@/api/types";
 import type { TimerHub } from "@/hub/timerHub";
 import { useState } from "react";
+import { humaniseHubError } from "@/lib/hubErrors";
 
 const presets = ["Wrap up", "5 min over", "Q&A time", "Mic check"];
 
 export default function MessageInput({ hub, snapshot, onError }: { hub: TimerHub | null; snapshot: Snapshot; onError?: (e: string) => void }) {
   const [draft, setDraft] = useState("");
   if (!hub) return null;
-  const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(String(e)));
+  const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(humaniseHubError(e)));
 
   return (
     <div className="space-y-2">

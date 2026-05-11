@@ -1,6 +1,7 @@
 import type { Snapshot } from "@/api/types";
 import type { TimerHub } from "@/hub/timerHub";
 import { useState } from "react";
+import { humaniseHubError } from "@/lib/hubErrors";
 
 interface Props { hub: TimerHub | null; snapshot: Snapshot; onError?: (e: string) => void }
 
@@ -21,7 +22,7 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
   // is actively running or paused — disable controls otherwise so we don't surface an
   // "InvalidPhase" hub error when there's nothing to adjust.
   const adjustable = snapshot.phase === "Running" || snapshot.phase === "Paused";
-  const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(String(e)));
+  const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(humaniseHubError(e)));
 
   return (
     <div className={`space-y-3 ${adjustable ? "" : "opacity-50"}`}>
@@ -44,7 +45,7 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
           disabled={!adjustable}
           onClick={() => {
             const sec = parseMmss(exact);
-            if (sec == null) { onError?.("Invalid format. Use MM:SS"); return; }
+            if (sec == null) { onError?.("Use the MM:SS format — like 12:30."); return; }
             handle(hub.setExactRemaining(snapshot.roomId, sec, v));
           }}
           className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:cursor-not-allowed disabled:bg-blue-900">

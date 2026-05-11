@@ -1,6 +1,7 @@
 import type { Snapshot } from "@/api/types";
 import type { TimerHub } from "@/hub/timerHub";
 import { Play, Pause, Square, RotateCcw, SkipForward } from "lucide-react";
+import { humaniseHubError } from "@/lib/hubErrors";
 
 interface Props {
   hub: TimerHub | null;
@@ -12,7 +13,7 @@ export default function TransportControls({ hub, snapshot, onError }: Props) {
   if (!hub) return null;
   const v = snapshot.version;
   const phase = snapshot.phase;
-  const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(String(e)));
+  const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(humaniseHubError(e)));
 
   // Skip needs a running/paused current item to compute "next". Disable otherwise so the
   // hub doesn't return NoNextItem when there's nothing to skip from.

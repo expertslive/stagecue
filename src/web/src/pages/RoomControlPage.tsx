@@ -7,7 +7,7 @@ import TimeAdjustments from "@/components/control/TimeAdjustments";
 import MessageInput from "@/components/control/MessageInput";
 import ScheduleList from "@/components/control/ScheduleList";
 import Countdown from "@/components/timer/Countdown";
-import { useState } from "react";
+import { useToast } from "@/components/ui/Toast";
 
 export default function RoomControlPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -17,7 +17,7 @@ export default function RoomControlPage() {
     enabled: !!roomId,
   });
   const { hub, snapshot, skewMs, ready, error } = useTimerHub(roomId ?? null, null);
-  const [hubError, setHubError] = useState<string | null>(null);
+  const toast = useToast();
 
   if (!roomId) return <div className="p-8 text-red-400">Missing room id.</div>;
   if (error) return <div className="p-8 text-red-400">Connection error: {error.message}</div>;
@@ -31,16 +31,15 @@ export default function RoomControlPage() {
         <Countdown snapshot={snapshot} skewMs={skewMs} />
       </div>
 
-      <TransportControls hub={hub} snapshot={snapshot} onError={setHubError} />
-      {hubError && <p className="text-sm text-red-400">{hubError}</p>}
+      <TransportControls hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
 
       <div>
         <h2 className="text-sm uppercase tracking-widest text-zinc-500 mb-2">Adjust time</h2>
-        <TimeAdjustments hub={hub} snapshot={snapshot} onError={setHubError} />
+        <TimeAdjustments hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
       </div>
       <div>
         <h2 className="text-sm uppercase tracking-widest text-zinc-500 mb-2">Live message</h2>
-        <MessageInput hub={hub} snapshot={snapshot} onError={setHubError} />
+        <MessageInput hub={hub} snapshot={snapshot} onError={(m) => toast.show({ message: m, tone: "error" })} />
       </div>
       <div>
         <h2 className="text-sm uppercase tracking-widest text-zinc-500 mb-2">Schedule</h2>
