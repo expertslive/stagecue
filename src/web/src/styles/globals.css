@@ -85,6 +85,18 @@ body {
 }
 .message-enter { animation: message-enter 240ms var(--ease-out); }
 
+/* Right-anchored slide-in drawer (room details panel). Backdrop fades; panel slides + fades. */
+@keyframes drawer-backdrop-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes drawer-panel-enter {
+  from { transform: translateX(24px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.drawer-backdrop-enter { animation: drawer-backdrop-enter 200ms var(--ease-out); }
+.drawer-panel-enter    { animation: drawer-panel-enter 280ms var(--ease-out); }
+
 /* Visible focus ring across the app — softer Apple-style glow rather than a hard outline.
    Falls through to outline for elements that suppress box-shadow. */
 button:focus-visible,

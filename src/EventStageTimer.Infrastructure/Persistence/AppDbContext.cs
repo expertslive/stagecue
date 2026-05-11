@@ -28,6 +28,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<ScheduleItemRun> ScheduleItemRuns => Set<ScheduleItemRun>();
     public DbSet<RoomTimerState> RoomTimerStates => Set<RoomTimerState>();
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
+    public DbSet<Programme> Programmes => Set<Programme>();
+    public DbSet<ProgrammeSlot> ProgrammeSlots => Set<ProgrammeSlot>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
     public DbSet<AuthMagicLink> AuthMagicLinks => Set<AuthMagicLink>();
     public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
@@ -106,6 +108,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.AccessCode).HasMaxLength(8).IsFixedLength();
             e.HasOne(x => x.Event).WithMany(ev => ev.Rooms).HasForeignKey(x => x.EventId);
+            // Optional programme binding. NoAction at the DB level because SQL Server forbids
+            // ON DELETE SET NULL when multiple cascade paths share an ancestor (Event); the
+            // controller's Programmes.Delete handler is responsible for nulling the references
+            // before deleting the programme. Same reason on ScheduleItem.ProgrammeSlotId below.
+            e.HasOne(x => x.Programme).WithMany().HasForeignKey(x => x.ProgrammeId).OnDelete(DeleteBehavior.NoAction);
+            e.HasIndex(x => x.ProgrammeId);
         });
 
         // ScheduleItem
@@ -115,6 +123,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(x => x.Title).HasMaxLength(300);
             e.Property(x => x.SpeakerName).HasMaxLength(200);
             e.HasOne(x => x.Room).WithMany(r => r.ScheduleItems).HasForeignKey(x => x.RoomId);
+            // Optional slot binding. Restrict on delete; controller code is responsible for
+            // detaching items first (null out ProgrammeSlotId) before removing the slot.
+            e.HasOne(x => x.ProgrammeSlot).WithMany().HasForeignKey(x => x.ProgrammeSlotId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.ProgrammeSlotId);
+        });
+
+        // Programme — event-level high-level time schedule.
+        b.Entity<Programme>(e =>
+        {
+            e.HasIndex(x => x.EventId);
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.HasOne(x => x.Event).WithMany().HasForeignKey(x => x.EventId);
+        });
+
+        // ProgrammeSlot — one row in a programme.
+        b.Entity<ProgrammeSlot>(e =>
+        {
+            e.HasIndex(x => new { x.ProgrammeId, x.Position });
+            e.Property(x => x.Label).HasMaxLength(200);
+            e.HasOne(x => x.Programme).WithMany(p => p.Slots).HasForeignKey(x => x.ProgrammeId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // ScheduleItemRun
@@ -178,6 +206,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         b.Entity<ScheduleItemRun>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
         b.Entity<RoomTimerState>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
         b.Entity<MessageTemplate>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
+        b.Entity<Programme>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId && x.DeletedAtUtc == null);
+        b.Entity<ProgrammeSlot>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
         b.Entity<AuditLogEntry>().HasQueryFilter(x => CurrentTenantId != null && x.TenantId == CurrentTenantId);
     }
 }

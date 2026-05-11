@@ -12,9 +12,9 @@ namespace EventStageTimer.Api.Controllers;
 [Route("api/rooms/{roomId:guid}/schedule")]
 public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : ControllerBase
 {
-    public sealed record ScheduleItemDto(Guid Id, int Position, string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson);
-    public sealed record CreateBody(string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson);
-    public sealed record UpdateBody(string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson);
+    public sealed record ScheduleItemDto(Guid Id, int Position, string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson, Guid? ProgrammeSlotId);
+    public sealed record CreateBody(string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson, Guid? ProgrammeSlotId);
+    public sealed record UpdateBody(string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec, int PreRollSec, bool AutoStart, string? ThresholdsJson, Guid? ProgrammeSlotId);
     public sealed record ReorderBody(IReadOnlyList<Guid> ItemIdsInOrder);
 
     [HttpGet]
@@ -22,7 +22,7 @@ public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : Con
         await db.ScheduleItems
             .Where(s => s.RoomId == roomId)
             .OrderBy(s => s.Position)
-            .Select(s => new ScheduleItemDto(s.Id, s.Position, s.Title, s.SpeakerName, s.ScheduledStartUtc, s.DurationSec, s.PreRollSec, s.AutoStart, s.ThresholdsJson))
+            .Select(s => new ScheduleItemDto(s.Id, s.Position, s.Title, s.SpeakerName, s.ScheduledStartUtc, s.DurationSec, s.PreRollSec, s.AutoStart, s.ThresholdsJson, s.ProgrammeSlotId))
             .ToListAsync(ct);
 
     [HttpPost]
@@ -32,6 +32,12 @@ public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : Con
         var room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId, ct);
         if (room is null) return NotFound();
         var maxPos = await db.ScheduleItems.Where(s => s.RoomId == roomId).Select(s => (int?)s.Position).MaxAsync(ct) ?? 0;
+
+        // When ProgrammeSlotId is set, validate the slot belongs to the room's programme and
+        // overwrite the client-provided start/duration with the slot's authoritative values.
+        var resolved = await ResolveSlotAsync(room, body.ProgrammeSlotId, body.ScheduledStartUtc, body.DurationSec, ct);
+        if (resolved.Error is not null) return BadRequest(new { error = resolved.Error });
+
         var item = new ScheduleItem
         {
             Id = Guid.NewGuid(),
@@ -40,16 +46,17 @@ public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : Con
             Position = maxPos + 1,
             Title = body.Title,
             SpeakerName = body.SpeakerName,
-            ScheduledStartUtc = body.ScheduledStartUtc,
-            DurationSec = body.DurationSec,
+            ScheduledStartUtc = resolved.Start,
+            DurationSec = resolved.DurationSec,
             PreRollSec = body.PreRollSec,
             AutoStart = body.AutoStart,
             ThresholdsJson = body.ThresholdsJson,
+            ProgrammeSlotId = resolved.SlotId,
             CreatedAtUtc = clock.UtcNow,
         };
         db.ScheduleItems.Add(item);
         await db.SaveChangesAsync(ct);
-        return Ok(new ScheduleItemDto(item.Id, item.Position, item.Title, item.SpeakerName, item.ScheduledStartUtc, item.DurationSec, item.PreRollSec, item.AutoStart, item.ThresholdsJson));
+        return Ok(new ScheduleItemDto(item.Id, item.Position, item.Title, item.SpeakerName, item.ScheduledStartUtc, item.DurationSec, item.PreRollSec, item.AutoStart, item.ThresholdsJson, item.ProgrammeSlotId));
     }
 
     [HttpPut("{itemId:guid}")]
@@ -58,13 +65,20 @@ public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : Con
     {
         var item = await db.ScheduleItems.FirstOrDefaultAsync(s => s.Id == itemId && s.RoomId == roomId, ct);
         if (item is null) return NotFound();
+        var room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId, ct);
+        if (room is null) return NotFound();
+
+        var resolved = await ResolveSlotAsync(room, body.ProgrammeSlotId, body.ScheduledStartUtc, body.DurationSec, ct);
+        if (resolved.Error is not null) return BadRequest(new { error = resolved.Error });
+
         item.Title = body.Title;
         item.SpeakerName = body.SpeakerName;
-        item.ScheduledStartUtc = body.ScheduledStartUtc;
-        item.DurationSec = body.DurationSec;
+        item.ScheduledStartUtc = resolved.Start;
+        item.DurationSec = resolved.DurationSec;
         item.PreRollSec = body.PreRollSec;
         item.AutoStart = body.AutoStart;
         item.ThresholdsJson = body.ThresholdsJson;
+        item.ProgrammeSlotId = resolved.SlotId;
         await db.SaveChangesAsync(ct);
         return NoContent();
     }
@@ -91,5 +105,25 @@ public sealed class ScheduleItemsController(AppDbContext db, IClock clock) : Con
         item.DeletedAtUtc = clock.UtcNow;
         await db.SaveChangesAsync(ct);
         return NoContent();
+    }
+
+    private sealed record SlotResolution(DateTime Start, int DurationSec, Guid? SlotId, string? Error);
+
+    /// <summary>
+    /// If `programmeSlotId` is provided, validates the slot belongs to the room's bound
+    /// programme and returns the slot's authoritative start/duration. Otherwise returns the
+    /// caller-provided values and a null slot reference. Returns an Error string if the slot
+    /// can't be attached; the caller surfaces that as a 400.
+    /// </summary>
+    private async Task<SlotResolution> ResolveSlotAsync(
+        Room room, Guid? programmeSlotId, DateTime fallbackStart, int fallbackDur, CancellationToken ct)
+    {
+        if (programmeSlotId is not { } sid) return new SlotResolution(fallbackStart, fallbackDur, null, null);
+        if (room.ProgrammeId is null)
+            return new SlotResolution(fallbackStart, fallbackDur, null, "RoomHasNoProgramme");
+        var slot = await db.ProgrammeSlots.FirstOrDefaultAsync(s => s.Id == sid && s.ProgrammeId == room.ProgrammeId, ct);
+        if (slot is null)
+            return new SlotResolution(fallbackStart, fallbackDur, null, "SlotNotInRoomProgramme");
+        return new SlotResolution(slot.StartUtc, slot.DurationSec, slot.Id, null);
     }
 }

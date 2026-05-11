@@ -9,6 +9,8 @@ export interface CreateScheduleItemBody {
   preRollSec: number;
   autoStart: boolean;
   thresholdsJson?: string | null;
+  /** Optional binding to a ProgrammeSlot. Server overwrites start/duration with the slot's authoritative values. */
+  programmeSlotId?: string | null;
 }
 
 export const scheduleItems = {

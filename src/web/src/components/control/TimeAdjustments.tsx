@@ -4,7 +4,15 @@ import { useState } from "react";
 import { humaniseHubError } from "@/lib/hubErrors";
 import Button from "@/components/ui/Button";
 
-interface Props { hub: TimerHub | null; snapshot: Snapshot; onError?: (e: string) => void }
+interface Props {
+  hub: TimerHub | null;
+  snapshot: Snapshot;
+  /** False when offline. Disables Set-exact-remaining (queueing it is ambiguous re: "as of when"). */
+  online: boolean;
+  /** Offline-aware preset adjust. Queued when disconnected. */
+  onAdjust: (deltaSec: number) => void;
+  onError?: (e: string) => void;
+}
 
 const subtractPresets = [
   { label: "−5m", deltaSec: -300 },
@@ -17,7 +25,7 @@ const addPresets = [
   { label: "+5m", deltaSec: 300 },
 ];
 
-export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
+export default function TimeAdjustments({ hub, snapshot, online, onAdjust, onError }: Props) {
   const [exact, setExact] = useState("");
   if (!hub) return null;
   const v = snapshot.version;
@@ -26,6 +34,7 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
   // "InvalidPhase" hub error when there's nothing to adjust.
   const adjustable = snapshot.phase === "Running" || snapshot.phase === "Paused";
   const handle = (p: Promise<unknown>) => p.catch((e) => onError?.(humaniseHubError(e)));
+  const offlineTitle = online ? undefined : "Requires connection";
 
   return (
     <div className={`space-y-3 ${adjustable ? "" : "opacity-50"}`}>
@@ -37,7 +46,7 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
               variant="secondary"
               size="md"
               disabled={!adjustable}
-              onClick={() => handle(hub.adjustTime(snapshot.roomId, p.deltaSec, v))}
+              onClick={() => onAdjust(p.deltaSec)}
               className="font-mono"
             >
               {p.label}
@@ -52,7 +61,7 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
               variant="secondary"
               size="md"
               disabled={!adjustable}
-              onClick={() => handle(hub.adjustTime(snapshot.roomId, p.deltaSec, v))}
+              onClick={() => onAdjust(p.deltaSec)}
               className="font-mono"
             >
               {p.label}
@@ -63,10 +72,11 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
       <div className="flex gap-2 items-center">
         <input
           type="text" placeholder="MM:SS" value={exact} onChange={(e) => setExact(e.target.value)}
-          disabled={!adjustable}
+          disabled={!adjustable || !online}
           className="px-3 py-2 rounded bg-zinc-950/60 border border-white/10 w-28 text-center font-mono disabled:cursor-not-allowed" />
         <Button
-          disabled={!adjustable}
+          disabled={!adjustable || !online}
+          title={!online ? offlineTitle : undefined}
           onClick={() => {
             const sec = parseMmss(exact);
             if (sec == null) { onError?.("Use the MM:SS format — like 12:30."); return; }
@@ -78,6 +88,9 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
       </div>
       {!adjustable && (
         <p className="text-xs text-zinc-500">Start a session to adjust the remaining time.</p>
+      )}
+      {adjustable && !online && (
+        <p className="text-xs text-zinc-500">Set-remaining requires connection. ± presets keep working offline.</p>
       )}
     </div>
   );

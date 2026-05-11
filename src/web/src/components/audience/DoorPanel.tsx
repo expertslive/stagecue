@@ -1,51 +1,82 @@
 import type { Snapshot } from "@/api/types";
 import { formatRemaining } from "@/lib/time";
 import { useEffect, useState } from "react";
+import type { DoorDisplayConfig } from "@/lib/doorDisplayConfig";
 
-interface Props { snapshot: Snapshot; skewMs: number; eventName: string; roomName: string }
+interface Props {
+  snapshot: Snapshot;
+  skewMs: number;
+  eventName: string;
+  roomName: string;
+  config: DoorDisplayConfig;
+}
 
-export default function DoorPanel({ snapshot, skewMs, eventName, roomName }: Props) {
+export default function DoorPanel({ snapshot, skewMs, eventName, roomName, config }: Props) {
   const [, setTick] = useState(0);
   useEffect(() => { const id = setInterval(() => setTick((n) => n + 1), 500); return () => clearInterval(id); }, []);
 
   const status = describeStatus(snapshot, skewMs);
+  const portrait = config.orientation === "portrait";
+
+  // Portrait layout: more vertical padding, larger room headline, single-column flow.
+  // Landscape layout: balanced top header + a centered body.
+  const containerCls = portrait
+    ? "flex flex-col h-full px-8 py-12 gap-6"
+    : "flex flex-col h-full p-10";
+  const eventNameCls = portrait
+    ? "text-base uppercase tracking-widest text-zinc-500"
+    : "text-sm uppercase tracking-widest text-zinc-500";
+  const roomNameCls = portrait
+    ? "text-5xl font-semibold tracking-tight mt-1"
+    : "text-3xl font-semibold mt-2";
+  const sectionGap = portrait ? "mb-10" : "mb-8";
+  const titleCls = portrait ? "text-3xl font-medium" : "text-2xl font-medium";
+  const speakerCls = portrait ? "text-xl text-zinc-400 mt-1" : "text-zinc-400";
+  const nextTitleCls = portrait ? "text-2xl" : "text-lg";
 
   return (
-    <div className="flex flex-col h-full p-10">
-      <div className="text-sm uppercase tracking-widest text-zinc-500">{eventName}</div>
-      <div className="text-3xl font-semibold mt-2">{roomName}</div>
+    <div className={containerCls}>
+      {(config.showEventName || config.showRoomName) && (
+        <div>
+          {config.showEventName && <div className={eventNameCls}>{eventName}</div>}
+          {config.showRoomName && <div className={roomNameCls}>{roomName}</div>}
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col justify-center">
-        <Section label="Now playing">
-          {snapshot.currentItem ? (
-            <>
-              <div className="text-2xl font-medium">{snapshot.currentItem.title}</div>
-              {snapshot.currentItem.speakerName && <div className="text-zinc-400">{snapshot.currentItem.speakerName}</div>}
-              <div className="text-zinc-500 mt-2 text-sm">{status}</div>
-            </>
-          ) : (
-            <div className="text-zinc-400">{status}</div>
-          )}
-        </Section>
+        {config.showNowPlaying && (
+          <div className={sectionGap}>
+            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Now playing</div>
+            {snapshot.currentItem ? (
+              <>
+                <div className={titleCls}>{snapshot.currentItem.title}</div>
+                {config.showSpeakerName && snapshot.currentItem.speakerName && (
+                  <div className={speakerCls}>{snapshot.currentItem.speakerName}</div>
+                )}
+                {config.showCountdown && <div className="text-zinc-500 mt-2 text-sm">{status}</div>}
+              </>
+            ) : (
+              <div className="text-zinc-400">{config.showCountdown ? status : "—"}</div>
+            )}
+          </div>
+        )}
 
-        <Section label="Up next">
-          {snapshot.nextItem ? (
-            <>
-              <div className="text-lg">{snapshot.nextItem.title}</div>
-              <div className="text-zinc-500 text-sm">{new Date(snapshot.nextItem.scheduledStartUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-            </>
-          ) : <div className="text-zinc-500">No upcoming sessions.</div>}
-        </Section>
+        {config.showUpNext && (
+          <div className={sectionGap}>
+            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Up next</div>
+            {snapshot.nextItem ? (
+              <>
+                <div className={nextTitleCls}>{snapshot.nextItem.title}</div>
+                {config.showUpNextTime && (
+                  <div className="text-zinc-500 text-sm">
+                    {new Date(snapshot.nextItem.scheduledStartUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                )}
+              </>
+            ) : <div className="text-zinc-500">No upcoming sessions.</div>}
+          </div>
+        )}
       </div>
-    </div>
-  );
-}
-
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-8">
-      <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">{label}</div>
-      {children}
     </div>
   );
 }

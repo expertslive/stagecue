@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { scheduleItems, type CreateScheduleItemBody } from "@/api/scheduleItems";
+import { programmes } from "@/api/programmes";
+import { useRoomEvent } from "@/hooks/useRoomEvent";
 import type { ScheduleItemDto } from "@/api/types";
 import ScheduleEditor from "@/components/control/ScheduleEditor";
 import ScheduleItemForm, { type ScheduleItemFormValues } from "@/components/control/ScheduleItemForm";
@@ -15,6 +17,20 @@ export default function ScheduleEditorPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const qc = useQueryClient();
   const itemsQuery = useQuery({ queryKey: ["schedule", roomId], queryFn: () => scheduleItems.list(roomId!), enabled: !!roomId });
+
+  // Resolve the room → event → programme so we know which slot list to surface in the form.
+  const { room, event } = useRoomEvent(roomId);
+  const eventId = event?.id ?? null;
+  const programmeId = room?.programmeId ?? null;
+  const programmesQuery = useQuery({
+    queryKey: ["programmes", eventId],
+    queryFn: () => programmes.list(eventId!),
+    enabled: !!eventId && !!programmeId,
+  });
+  const programmeSlots = useMemo(() => {
+    if (!programmeId) return undefined;
+    return programmesQuery.data?.find((p) => p.id === programmeId)?.slots;
+  }, [programmesQuery.data, programmeId]);
 
   const toast = useToast();
 
@@ -58,6 +74,7 @@ export default function ScheduleEditorPage() {
               preRollSec: deleted.preRollSec,
               autoStart: deleted.autoStart,
               thresholdsJson: deleted.thresholdsJson,
+              programmeSlotId: deleted.programmeSlotId,
             });
             toast.show({ message: `Restored "${deleted.title}"` });
           },
@@ -80,6 +97,12 @@ export default function ScheduleEditorPage() {
         </div>
       </div>
 
+      {programmeId && (
+        <p className="text-xs text-zinc-500">
+          This room is bound to a programme. New sessions can attach to a slot from the picker (or be planned freely).
+        </p>
+      )}
+
       <ScheduleEditor
         items={itemsQuery.data!}
         onReorder={(ids) => reorderMutation.mutate(ids)}
@@ -89,12 +112,14 @@ export default function ScheduleEditorPage() {
 
       <ScheduleItemForm
         open={creating}
+        programmeSlots={programmeSlots}
         onCancel={() => setCreating(false)}
         onSubmit={async (v) => { await createMutation.mutateAsync(toBody(v)); setCreating(false); }}
       />
       <ScheduleItemForm
         open={editing !== null}
         initial={editing ?? undefined}
+        programmeSlots={programmeSlots}
         onCancel={() => setEditing(null)}
         onSubmit={async (v) => { if (editing) { await updateMutation.mutateAsync({ id: editing.id, body: toBody(v) }); setEditing(null); } }}
       />
@@ -124,5 +149,6 @@ function toBody(v: ScheduleItemFormValues): CreateScheduleItemBody {
     preRollSec: v.preRollSec,
     autoStart: v.autoStart,
     thresholdsJson: v.thresholds.length ? JSON.stringify(v.thresholds) : null,
+    programmeSlotId: v.programmeSlotId,
   };
 }

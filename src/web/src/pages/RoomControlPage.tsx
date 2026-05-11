@@ -1,10 +1,11 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { rooms } from "@/api/rooms";
 import { scheduleItems } from "@/api/scheduleItems";
 import Skeleton from "@/components/ui/Skeleton";
 import { useTimerHub } from "@/hub/useTimerHub";
+import { useOfflineCommands } from "@/hub/useOfflineCommands";
 import TransportControlsV2 from "@/components/control/TransportControlsV2";
 import OperatorHero from "@/components/control/OperatorHero";
 import ToolsPanel, { type ToolsTabId } from "@/components/control/ToolsPanel";
@@ -27,7 +28,7 @@ export default function RoomControlPage() {
     queryFn: () => rooms.schedule(roomId!),
     enabled: !!roomId,
   });
-  const { hub, snapshot, skewMs, ready, error } = useTimerHub(roomId ?? null, null);
+  const { hub, snapshot: serverSnapshot, skewMs, ready, error, connectionState } = useTimerHub(roomId ?? null, null);
   const rehearsal = useRehearsalClock(skewMs);
   const toast = useToast();
   const qc = useQueryClient();
@@ -37,8 +38,31 @@ export default function RoomControlPage() {
   const [quickTimerOpen, setQuickTimerOpen] = useState(false);
   const messageInputRef = useRef<HTMLInputElement>(null);
 
+  const handleReconcile = useCallback((synced: number, skipped: number) => {
+    if (synced === 0 && skipped === 0) return;
+    const parts: string[] = [];
+    parts.push(`${synced} synced`);
+    if (skipped > 0) parts.push(`${skipped} skipped`);
+    toast.show({ message: `Reconnected · ${parts.join(", ")}` });
+  }, [toast]);
+
+  const handleCommandError = useCallback((e: Error) => {
+    toast.show({ message: humaniseHubError(e), tone: "error" });
+  }, [toast]);
+
+  const offline = useOfflineCommands({
+    hub,
+    serverSnapshot,
+    connectionState,
+    onReconcile: handleReconcile,
+    onError: handleCommandError,
+  });
+  // From here on we render against the optimistic snapshot, not the raw server one.
+  const snapshot = offline.snapshot;
+  const isOnline = offline.online;
+
   async function startQuickTimer({ title, durationSec }: { title: string; durationSec: number }) {
-    if (!hub || !snapshot || !roomId) throw new Error("Not connected yet.");
+    if (!hub || !snapshot || !roomId || !isOnline) throw new Error("Quick timer requires a live connection.");
     const item = await scheduleItems.create(roomId, {
       title,
       speakerName: null,
@@ -56,26 +80,28 @@ export default function RoomControlPage() {
   const safe = (p: Promise<unknown>) => p.catch((e) => toast.show({ message: humaniseHubError(e), tone: "error" }));
 
   const sendPreset = (i: number) => {
-    if (!snapshot || !hub) return;
     const list = ["Wrap up", "5 min over", "Q&A time", "Mic check"];
-    safe(hub.setMessage(snapshot.roomId, list[i - 1]));
+    safe(offline.setMessage(list[i - 1]));
   };
 
   const focusMessage = () => {
     setToolsTab("message");
-    // Defer to next frame so the input is mounted before we try to focus it.
     requestAnimationFrame(() => messageInputRef.current?.focus());
   };
 
   useShortcuts({
     Space: () => {
       if (!snapshot || !hub) return;
-      if (snapshot.phase === "Running") safe(hub.pause(snapshot.roomId, snapshot.version));
-      else if (snapshot.phase === "Paused") safe(hub.resume(snapshot.roomId, snapshot.version));
-      else if (snapshot.phase === "Idle") safe(snapshot.currentItem ? hub.startItem(snapshot.roomId, snapshot.currentItem.id, snapshot.version) : hub.startAuto(snapshot.roomId, snapshot.version));
+      if (snapshot.phase === "Running") safe(offline.pause());
+      else if (snapshot.phase === "Paused") safe(offline.resume());
+      else if (snapshot.phase === "Idle" && isOnline) {
+        safe(snapshot.currentItem
+          ? hub.startItem(snapshot.roomId, snapshot.currentItem.id, snapshot.version)
+          : hub.startAuto(snapshot.roomId, snapshot.version));
+      }
     },
-    S: () => snapshot && hub && setPendingDestructive("skip"),
-    R: () => snapshot && hub && setPendingDestructive("reset"),
+    S: () => isOnline && snapshot && hub && setPendingDestructive("skip"),
+    R: () => isOnline && snapshot && hub && setPendingDestructive("reset"),
     m: focusMessage,
     "?": () => setShortcutsOpen(true),
     "1": () => sendPreset(1),
@@ -85,43 +111,53 @@ export default function RoomControlPage() {
   });
 
   if (!roomId) return <div className="p-8 text-red-400">Missing room id.</div>;
-  if (error) return <div className="p-8 text-red-400">Connection error: {error.message}</div>;
-  if (!ready || !snapshot) {
-    return (
-      <div className="p-6 max-w-7xl mx-auto space-y-4">
-        <Skeleton className="h-6 w-40" />
-        <div className="rounded-2xl border border-white/5 bg-zinc-900/60 backdrop-blur-sm p-6 flex justify-center">
-          <Skeleton className="h-48 w-2/3" />
+  // First-load only — once we have a snapshot we hold onto it through reconnects so the
+  // countdown keeps ticking through venue Wi-Fi blips.
+  if (!snapshot) {
+    if (error) return <div className="p-8 text-red-400">Connection error: {error.message}</div>;
+    if (!ready) {
+      return (
+        <div className="p-6 max-w-7xl mx-auto space-y-4">
+          <Skeleton className="h-6 w-40" />
+          <div className="rounded-2xl border border-white/5 bg-zinc-900/60 backdrop-blur-sm p-6 flex justify-center">
+            <Skeleton className="h-48 w-2/3" />
+          </div>
+          <Skeleton className="h-10 w-64" />
         </div>
-        <Skeleton className="h-10 w-64" />
-      </div>
-    );
+      );
+    }
   }
+  if (!snapshot) return null;
 
   const nextTitle = snapshot.nextItem?.title ?? null;
   const scheduleList = scheduleQuery.data ?? [];
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
-      {/* Header row: just the live indicator. The EventContextBar already provides Event ▸ Room. */}
-      <div className="mb-4 flex items-center justify-end">
-        <LiveIndicator ready={ready} hasError={error !== null} lastSnapshotUtc={snapshot.serverNowUtc} />
+      <div className="mb-4 flex items-center justify-end gap-3">
+        <LiveIndicator
+          connectionState={connectionState}
+          queuedCount={offline.queuedCount}
+          lastSnapshotUtc={serverSnapshot?.serverNowUtc ?? null}
+        />
         <Link to={`/rooms/${roomId}/show`}>
           <Button size="sm" variant="ghost">Show mode</Button>
         </Link>
       </div>
 
-      {/* Two-column on lg+: control surface left, schedule rail right. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
         <div className="space-y-4 min-w-0">
           <OperatorHero
             snapshot={snapshot}
             skewMs={rehearsal.effectiveSkewMs}
-            onQuickTimer={() => setQuickTimerOpen(true)}
+            onQuickTimer={isOnline ? () => setQuickTimerOpen(true) : undefined}
           />
           <TransportControlsV2
             hub={hub}
             snapshot={snapshot}
+            online={isOnline}
+            onPause={() => safe(offline.pause())}
+            onResume={() => safe(offline.resume())}
             onError={(m) => toast.show({ message: m, tone: "error" })}
           />
           <RehearsalControls
@@ -134,10 +170,14 @@ export default function RoomControlPage() {
             ref={messageInputRef}
             hub={hub}
             snapshot={snapshot}
+            online={isOnline}
+            onAdjustTime={(deltaSec) => safe(offline.adjustTime(deltaSec))}
+            onSetMessage={(text) => safe(offline.setMessage(text))}
+            onClearMessage={() => safe(offline.clearMessage())}
             activeTab={toolsTab}
             onTabChange={setToolsTab}
             scheduleItems={scheduleList}
-            includeScheduleTab // narrow viewports stack everything, so we expose Schedule here too
+            includeScheduleTab
             onError={(m) => toast.show({ message: m, tone: "error" })}
           />
         </div>
@@ -165,7 +205,7 @@ export default function RoomControlPage() {
         confirmLabel="Skip"
         onConfirm={() => {
           setPendingDestructive(null);
-          safe(hub!.skipNext(snapshot.roomId, snapshot.version));
+          if (hub) safe(hub.skipNext(snapshot.roomId, snapshot.version));
         }}
         onCancel={() => setPendingDestructive(null)}
       />
@@ -184,7 +224,7 @@ export default function RoomControlPage() {
         confirmLabel="Clear session"
         onConfirm={() => {
           setPendingDestructive(null);
-          safe(hub!.reset(snapshot.roomId, snapshot.version));
+          if (hub) safe(hub.reset(snapshot.roomId, snapshot.version));
         }}
         onCancel={() => setPendingDestructive(null)}
       />

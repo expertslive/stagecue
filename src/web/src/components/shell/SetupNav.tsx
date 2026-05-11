@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 
 const TABS = [
+  { id: "programmes", label: "Programmes" },
   { id: "templates", label: "Templates" },
   { id: "branding", label: "Branding" },
   { id: "members", label: "Members" },
