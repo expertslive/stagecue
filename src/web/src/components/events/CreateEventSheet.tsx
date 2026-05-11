@@ -55,7 +55,7 @@ export default function CreateEventSheet({ open, onClose }: Props) {
             autoFocus
             value={name} onChange={(e) => setName(e.target.value)}
             placeholder="Annual Conference 2026"
-            className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 focus-visible:outline-none focus-visible:border-blue-500"
+            className="w-full px-3 py-2 rounded bg-zinc-950/60 border border-white/10 focus-visible:outline-none focus-visible:border-blue-500"
           />
         </label>
         <div className="grid grid-cols-2 gap-3">
@@ -64,7 +64,7 @@ export default function CreateEventSheet({ open, onClose }: Props) {
             <input
               type="datetime-local" value={startLocal}
               onChange={(e) => setStartLocal(e.target.value)}
-              className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800"
+              className="w-full px-3 py-2 rounded bg-zinc-950/60 border border-white/10"
             />
           </label>
           <label className="block">
@@ -72,7 +72,7 @@ export default function CreateEventSheet({ open, onClose }: Props) {
             <input
               type="number" min={1} max={72} value={durationHours}
               onChange={(e) => setDurationHours(parseInt(e.target.value, 10) || 1)}
-              className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 font-mono"
+              className="w-full px-3 py-2 rounded bg-zinc-950/60 border border-white/10 font-mono"
             />
           </label>
         </div>

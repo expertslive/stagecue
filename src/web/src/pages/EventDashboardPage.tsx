@@ -1,16 +1,22 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { events } from "@/api/events";
 import { rooms as roomsApi } from "@/api/rooms";
 import type { RoomDto } from "@/api/types";
+import { useEventRoomSnapshots } from "@/hub/useEventRoomSnapshots";
+import EventIdentity from "@/components/events/EventIdentity";
+import LobbyCard from "@/components/events/LobbyCard";
+import RoomTile from "@/components/events/RoomTile";
+import UpcomingToday from "@/components/events/UpcomingToday";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import Skeleton from "@/components/ui/Skeleton";
 import SkeletonRow from "@/components/ui/SkeletonRow";
 import RoomFormSheet from "@/components/events/RoomFormSheet";
-import { Plus, Pencil, Trash2, RotateCcw, DoorOpen } from "lucide-react";
+import { Plus, DoorOpen } from "lucide-react";
 
 export default function EventDashboardPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -27,6 +33,9 @@ export default function EventDashboardPage() {
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomDto | null>(null);
   const [pendingDeleteRoom, setPendingDeleteRoom] = useState<RoomDto | null>(null);
+
+  const roomIds = roomsQuery.data?.map((r) => r.id) ?? [];
+  const { snapshots, skewMs } = useEventRoomSnapshots(roomIds);
 
   const rotateLobby = useMutation({
     mutationFn: () => events.regenerateLobbyAccessCode(eventId!),
@@ -46,8 +55,9 @@ export default function EventDashboardPage() {
   if (!eventId) return <div className="p-8 text-red-400">Missing event id.</div>;
   if (evQuery.isLoading || roomsQuery.isLoading) {
     return (
-      <div className="p-8 max-w-5xl mx-auto space-y-6">
-        <Skeleton className="h-6 w-48" />
+      <div className="p-8 max-w-6xl mx-auto space-y-6">
+        <Skeleton className="h-9 w-72" />
+        <Skeleton className="h-4 w-56" />
         <SkeletonRow count={2} />
       </div>
     );
@@ -55,7 +65,7 @@ export default function EventDashboardPage() {
   if (evQuery.error || roomsQuery.error) return <div className="p-8 text-red-400">Failed to load.</div>;
 
   const ev = evQuery.data!;
-  const rooms = roomsQuery.data!;
+  const eventRooms = roomsQuery.data!;
 
   function confirmRotate() {
     if (!pendingRotate) return;
@@ -85,90 +95,54 @@ export default function EventDashboardPage() {
   }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-baseline gap-4 flex-wrap">
-        <h1 className="text-2xl font-semibold">{ev.name}</h1>
-        <span className="text-sm text-zinc-500">lobby code <code>{formatCode(ev.lobbyAccessCode)}</code></span>
-        <button
-          type="button"
-          onClick={() => setPendingRotate({ kind: "lobby" })}
-          disabled={rotateLobby.isPending}
-          className="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
-        >
-          {rotateLobby.isPending ? "Resetting…" : "Reset access code"}
-        </button>
-        <Link to={`/e/${formatCode(ev.lobbyAccessCode)}/lobby`} target="_blank" className="text-sm text-blue-400 hover:underline">Open lobby →</Link>
-      </div>
+    <div className="px-6 py-8 lg:px-8 max-w-6xl mx-auto space-y-8">
+      <EventIdentity event={ev} snapshots={snapshots} roomCount={eventRooms.length} />
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm uppercase tracking-widest text-zinc-500">Rooms</h2>
-        {rooms.length > 0 && (
-          <Button size="sm" leadingIcon={<Plus className="size-4" />} onClick={() => setCreatingRoom(true)}>
-            Add room
-          </Button>
-        )}
-      </div>
+      <LobbyCard
+        code={ev.lobbyAccessCode}
+        onReset={() => setPendingRotate({ kind: "lobby" })}
+      />
 
-      {rooms.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-zinc-800 p-10 text-center">
-          <DoorOpen className="mx-auto size-10 text-zinc-600" />
-          <h3 className="mt-3 text-lg font-medium">No rooms yet</h3>
-          <p className="mt-1 text-sm text-zinc-500">
-            Add a stage, studio, or breakout room — each gets its own timer, schedule, and access codes.
-          </p>
-          <div className="mt-4">
-            <Button leadingIcon={<Plus className="size-4" />} onClick={() => setCreatingRoom(true)}>
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-zinc-200">Rooms</h2>
+          {eventRooms.length > 0 && (
+            <Button size="sm" variant="ghost" leadingIcon={<Plus className="size-4" />} onClick={() => setCreatingRoom(true)}>
               Add room
             </Button>
-          </div>
+          )}
         </div>
-      ) : (
-        <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {rooms.map((r) => (
-            <li key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="font-medium text-lg">{r.name}</div>
-                  <code className="text-xs text-zinc-500">{formatCode(r.accessCode)}</code>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    title="Edit room"
-                    onClick={() => setEditingRoom(r)}
-                    className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-                  >
-                    <Pencil className="size-4" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Reset access code"
-                    onClick={() => setPendingRotate({ kind: "room", id: r.id, name: r.name })}
-                    disabled={rotateRoom.isPending}
-                    className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
-                  >
-                    <RotateCcw className="size-4" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Delete room"
-                    onClick={() => setPendingDeleteRoom(r)}
-                    className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                </div>
-              </div>
-              <div className="flex gap-3 text-sm flex-wrap">
-                <Link to={`/rooms/${r.id}`} className="text-blue-400 hover:underline">Control →</Link>
-                <Link to={`/rooms/${r.id}/schedule`} className="text-blue-400 hover:underline">Schedule</Link>
-                <Link to={`/r/${formatCode(r.accessCode)}/speaker`} target="_blank" className="text-blue-400 hover:underline">Speaker</Link>
-                <Link to={`/r/${formatCode(r.accessCode)}/door`} target="_blank" className="text-blue-400 hover:underline">Door</Link>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+
+        {eventRooms.length === 0 ? (
+          <Card tone="dashed" density="comfortable" className="text-center !p-10">
+            <DoorOpen className="mx-auto size-10 text-zinc-600" />
+            <h3 className="mt-3 text-lg font-medium text-zinc-200">No rooms yet</h3>
+            <p className="mt-1 text-sm text-zinc-500">
+              Add a stage, studio, or breakout — each gets its own timer, schedule, and access codes.
+            </p>
+            <div className="mt-4 flex justify-center">
+              <Button leadingIcon={<Plus className="size-4" />} onClick={() => setCreatingRoom(true)}>Add room</Button>
+            </div>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {eventRooms.map((r) => (
+              <RoomTile
+                key={r.id}
+                room={r}
+                snapshot={snapshots[r.id]}
+                skewMs={skewMs}
+                onEdit={setEditingRoom}
+                onResetCode={(room) => setPendingRotate({ kind: "room", id: room.id, name: room.name })}
+                onDelete={setPendingDeleteRoom}
+              />
+            ))}
+            <AddRoomTile onClick={() => setCreatingRoom(true)} />
+          </div>
+        )}
+      </section>
+
+      {eventRooms.length > 0 && <UpcomingToday rooms={eventRooms} />}
 
       <ConfirmDialog
         open={pendingRotate !== null}
@@ -211,6 +185,15 @@ export default function EventDashboardPage() {
   );
 }
 
-function formatCode(code: string): string {
-  return code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+function AddRoomTile({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex min-h-[200px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.01] text-zinc-500 transition-colors hover:border-white/20 hover:text-zinc-300"
+    >
+      <Plus className="size-5 transition-transform group-hover:scale-110" />
+      <span className="text-sm font-medium">Add room</span>
+    </button>
+  );
 }

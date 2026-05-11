@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { audit } from "@/api/audit";
 import { useState } from "react";
+import SetupNav from "@/components/shell/SetupNav";
 
 export default function AuditPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -18,13 +19,14 @@ export default function AuditPage() {
   );
 
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-4">
-      <Link to={`/events/${eventId}`} className="text-sm text-zinc-400 hover:text-zinc-200">← Event</Link>
-      <h1 className="text-2xl font-semibold">Audit log</h1>
+    <div className="p-8 max-w-4xl mx-auto">
+      <SetupNav eventId={eventId} />
+      <div className="space-y-4">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Audit log</h1>
       <input
         value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by action / user / room"
-        className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 text-sm" />
-      <ul className="rounded border border-zinc-800 divide-y divide-zinc-800 font-mono text-xs">
+        className="w-full px-3 py-2 rounded bg-zinc-950/60 border border-white/10 text-sm" />
+      <ul className="rounded-xl border border-white/5 divide-y divide-white/5 font-mono text-xs">
         {rows.map((r) => (
           <li key={r.id} className="grid grid-cols-[140px_120px_140px_1fr_2fr] gap-3 p-2">
             <span className="text-zinc-500">{new Date(r.atUtc).toLocaleString()}</span>
@@ -36,6 +38,7 @@ export default function AuditPage() {
         ))}
         {rows.length === 0 && <li className="p-3 text-sm text-zinc-500">No entries.</li>}
       </ul>
+      </div>
     </div>
   );
 }

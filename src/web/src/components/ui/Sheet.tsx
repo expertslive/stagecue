@@ -42,7 +42,7 @@ export default function Sheet({ open, onClose, onConfirm, children, maxWidth = "
     <div
       data-testid="sheet-backdrop"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-6 sheet-backdrop-enter"
     >
       <div
         ref={panelRef}
@@ -51,7 +51,7 @@ export default function Sheet({ open, onClose, onConfirm, children, maxWidth = "
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth }}
-        className="w-full max-h-[90vh] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-6 shadow-xl"
+        className="w-full max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-zinc-900/90 p-6 shadow-2xl backdrop-blur-xl sheet-panel-enter"
       >
         {children}
       </div>

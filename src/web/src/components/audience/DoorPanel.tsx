@@ -24,7 +24,7 @@ export default function DoorPanel({ snapshot, skewMs, eventName, roomName }: Pro
               <div className="text-zinc-500 mt-2 text-sm">{status}</div>
             </>
           ) : (
-            <div className="text-zinc-500 italic">{status}</div>
+            <div className="text-zinc-400">{status}</div>
           )}
         </Section>
 
@@ -34,7 +34,7 @@ export default function DoorPanel({ snapshot, skewMs, eventName, roomName }: Pro
               <div className="text-lg">{snapshot.nextItem.title}</div>
               <div className="text-zinc-500 text-sm">{new Date(snapshot.nextItem.scheduledStartUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
             </>
-          ) : <div className="text-zinc-500 italic">No upcoming sessions.</div>}
+          ) : <div className="text-zinc-500">No upcoming sessions.</div>}
         </Section>
       </div>
     </div>

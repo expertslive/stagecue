@@ -18,8 +18,8 @@ export default function ConfirmDialog({
 }: Props) {
   const confirmClass =
     tone === "danger"
-      ? "bg-red-600 hover:bg-red-500 focus-visible:ring-red-400"
-      : "bg-blue-600 hover:bg-blue-500 focus-visible:ring-blue-400";
+      ? "bg-red-600 hover:bg-red-500"
+      : "bg-[var(--cta)] hover:bg-[var(--cta-hover)]";
 
   return (
     <Sheet open={open} onClose={onCancel} onConfirm={onConfirm} maxWidth="28rem">
@@ -29,14 +29,14 @@ export default function ConfirmDialog({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
+          className="rounded bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
         >
           {cancelLabel}
         </button>
         <button
           type="button"
           onClick={onConfirm}
-          className={`rounded px-3 py-2 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 ${confirmClass}`}
+          className={`rounded px-3 py-2 text-sm font-medium text-white ${confirmClass}`}
         >
           {confirmLabel}
         </button>

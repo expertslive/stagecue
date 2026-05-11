@@ -32,7 +32,7 @@ export default function CueStrip({ snapshot }: Props) {
   }
 
   return (
-    <div className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+    <div className="flex items-center gap-4 rounded-xl border border-white/5 bg-zinc-900/60 backdrop-blur-sm p-4">
       <Play className="size-5 text-zinc-500" />
       <div className="flex-1 min-w-0">
         <div className="text-xs uppercase tracking-widest text-zinc-500">{leading}</div>

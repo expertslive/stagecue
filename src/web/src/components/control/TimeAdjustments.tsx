@@ -2,13 +2,16 @@ import type { Snapshot } from "@/api/types";
 import type { TimerHub } from "@/hub/timerHub";
 import { useState } from "react";
 import { humaniseHubError } from "@/lib/hubErrors";
+import Button from "@/components/ui/Button";
 
 interface Props { hub: TimerHub | null; snapshot: Snapshot; onError?: (e: string) => void }
 
-const presets = [
+const subtractPresets = [
   { label: "−5m", deltaSec: -300 },
   { label: "−1m", deltaSec: -60 },
   { label: "−30s", deltaSec: -30 },
+];
+const addPresets = [
   { label: "+30s", deltaSec: 30 },
   { label: "+1m", deltaSec: 60 },
   { label: "+5m", deltaSec: 300 },
@@ -26,31 +29,52 @@ export default function TimeAdjustments({ hub, snapshot, onError }: Props) {
 
   return (
     <div className={`space-y-3 ${adjustable ? "" : "opacity-50"}`}>
-      <div className="flex flex-wrap gap-2">
-        {presets.map((p) => (
-          <button key={p.label}
-            disabled={!adjustable}
-            onClick={() => handle(hub.adjustTime(snapshot.roomId, p.deltaSec, v))}
-            className="px-3 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm font-mono disabled:cursor-not-allowed disabled:hover:bg-zinc-800">
-            {p.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex gap-1.5">
+          {subtractPresets.map((p) => (
+            <Button
+              key={p.label}
+              variant="secondary"
+              size="md"
+              disabled={!adjustable}
+              onClick={() => handle(hub.adjustTime(snapshot.roomId, p.deltaSec, v))}
+              className="font-mono"
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+        <span aria-hidden="true" className="mx-1 h-6 w-px bg-zinc-800" />
+        <div className="flex gap-1.5">
+          {addPresets.map((p) => (
+            <Button
+              key={p.label}
+              variant="secondary"
+              size="md"
+              disabled={!adjustable}
+              onClick={() => handle(hub.adjustTime(snapshot.roomId, p.deltaSec, v))}
+              className="font-mono"
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
       </div>
       <div className="flex gap-2 items-center">
         <input
           type="text" placeholder="MM:SS" value={exact} onChange={(e) => setExact(e.target.value)}
           disabled={!adjustable}
-          className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800 w-28 text-center font-mono disabled:cursor-not-allowed" />
-        <button
+          className="px-3 py-2 rounded bg-zinc-950/60 border border-white/10 w-28 text-center font-mono disabled:cursor-not-allowed" />
+        <Button
           disabled={!adjustable}
           onClick={() => {
             const sec = parseMmss(exact);
             if (sec == null) { onError?.("Use the MM:SS format — like 12:30."); return; }
             handle(hub.setExactRemaining(snapshot.roomId, sec, v));
           }}
-          className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:cursor-not-allowed disabled:bg-blue-900">
+        >
           Set remaining
-        </button>
+        </Button>
       </div>
       {!adjustable && (
         <p className="text-xs text-zinc-500">Start a session to adjust the remaining time.</p>
