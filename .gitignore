@@ -1,6 +1,9 @@
 # Brainstorming + planning artifacts
 .superpowers/
 
+# Git worktrees
+.worktrees/
+
 # Vite/SPA build output
 src/web/dist/
 src/EventStageTimer.Api/wwwroot/*
