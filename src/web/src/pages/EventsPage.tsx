@@ -1,9 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { events } from "@/api/events";
-import { auth } from "@/api/auth";
-import { useAuthStore } from "@/state/authStore";
 import Button from "@/components/ui/Button";
 import SkeletonRow from "@/components/ui/SkeletonRow";
 import CreateEventSheet from "@/components/events/CreateEventSheet";
@@ -17,10 +15,7 @@ export default function EventsPage() {
     <div className="p-8 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Events</h1>
-        <div className="flex items-center gap-3">
-          <Button leadingIcon={<Plus className="size-4" />} onClick={() => setCreating(true)}>New event</Button>
-          <SignOutButton />
-        </div>
+        <Button leadingIcon={<Plus className="size-4" />} onClick={() => setCreating(true)}>New event</Button>
       </div>
 
       {eventsQuery.isLoading && <SkeletonRow count={3} />}
@@ -54,17 +49,5 @@ export default function EventsPage() {
 
       <CreateEventSheet open={creating} onClose={() => setCreating(false)} />
     </div>
-  );
-}
-
-function SignOutButton() {
-  const nav = useNavigate();
-  const signOut = useAuthStore((s) => s.signOut);
-  return (
-    <button
-      onClick={async () => { await auth.signOut(); signOut(); nav("/signin"); }}
-      className="text-sm text-zinc-400 hover:text-zinc-200">
-      Sign out
-    </button>
   );
 }

@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { auth } from "@/api/auth";
 import { useAuthStore } from "@/state/authStore";
+import AppShell from "@/components/shell/AppShell";
 
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
   const signedIn = useAuthStore((s) => s.signedInEmail);
@@ -30,5 +31,5 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
   if (checking) return <div className="p-8">Loading…</div>;
   if (needsSetup) return <Navigate to="/setup" replace />;
   if (redirectToSignIn) return <Navigate to="/signin" replace />;
-  return <>{children}</>;
+  return <AppShell>{children}</AppShell>;
 }

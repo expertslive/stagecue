@@ -55,7 +55,6 @@ export default function EventDashboardPage() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
-      <Link to="/" className="text-sm text-zinc-400 hover:text-zinc-200">← All events</Link>
       <div className="flex items-baseline gap-4 flex-wrap">
         <h1 className="text-2xl font-semibold">{ev.name}</h1>
         <span className="text-sm text-zinc-500">lobby code <code>{formatCode(ev.lobbyAccessCode)}</code></span>
@@ -69,13 +68,7 @@ export default function EventDashboardPage() {
         </button>
         <Link to={`/e/${formatCode(ev.lobbyAccessCode)}/lobby`} target="_blank" className="text-sm text-blue-400 hover:underline">Open lobby →</Link>
       </div>
-      <nav className="flex gap-3 text-sm border-b border-zinc-800 pb-3">
-        <Link to={`/events/${ev.id}/templates`} className="text-blue-400 hover:underline">Templates</Link>
-        <Link to={`/events/${ev.id}/branding`} className="text-blue-400 hover:underline">Branding</Link>
-        <Link to={`/events/${ev.id}/members`} className="text-blue-400 hover:underline">Members</Link>
-        <Link to={`/events/${ev.id}/audit`} className="text-blue-400 hover:underline">Audit log</Link>
-      </nav>
-      <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+<ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {rooms.map((r) => (
           <li key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 space-y-2">
             <div className="flex items-baseline justify-between">
