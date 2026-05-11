@@ -23,6 +23,7 @@ export default function Countdown({ snapshot, skewMs }: Props) {
 
   // Pulse during the final 10 seconds of a Running session.
   const pulse = snapshot.phase === "Running" && remainingMs > 0 && remainingMs <= 10_000;
+  const announce = snapshot.phase === "Running" && remainingMs > 0 && remainingMs <= 60_000;
 
   return (
     <div className="flex flex-col items-center justify-center w-full">
@@ -30,6 +31,8 @@ export default function Countdown({ snapshot, skewMs }: Props) {
       <div
         className={`countdown-color font-bold leading-none tabular-nums ${pulse ? "countdown-pulse" : ""}`}
         style={{ color, fontSize: "min(28vw, 360px)", letterSpacing: "-0.04em" }}
+        aria-live={announce ? "polite" : undefined}
+        aria-atomic={announce ? "true" : undefined}
       >
         {formatRemaining(remainingMs)}
       </div>

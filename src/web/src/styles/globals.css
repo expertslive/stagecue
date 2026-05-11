@@ -36,3 +36,14 @@ body {
   100% { transform: scale(1); }
 }
 .countdown-pulse { animation: countdown-pulse 1s ease-in-out infinite; }
+
+/* Visible focus ring across the app — overrides any removed outlines. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #5e9eff;
+  outline-offset: 2px;
+}
