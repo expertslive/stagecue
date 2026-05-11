@@ -4,7 +4,7 @@ import { events } from "@/api/events";
 import { auth } from "@/api/auth";
 import { useAuthStore } from "@/state/authStore";
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const SETUP_SEGMENTS = ["templates", "branding", "members", "audit"];
 
@@ -57,8 +57,21 @@ function TabLink({ to, active, children }: { to: string; active: boolean; childr
 
 function EventSwitcher({ current, events }: { current: { id: string; name: string }; events: { id: string; name: string }[] }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
   return (
-    <div className="relative">
+    <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((s) => !s)}
         className="flex items-center gap-1 rounded px-2 py-1 text-sm font-medium hover:bg-zinc-800"
