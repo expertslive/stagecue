@@ -42,7 +42,7 @@ export default function EventDashboardPage() {
   const [openPanelRoom, setOpenPanelRoom] = useState<RoomDto | null>(null);
 
   const roomIds = roomsQuery.data?.map((r) => r.id) ?? [];
-  const { snapshots, presence, skewMs } = useEventRoomSnapshots(roomIds, eventId);
+  const { snapshots, presence, skewMs, stopRoom } = useEventRoomSnapshots(roomIds, eventId);
 
   const rotateLobby = useMutation({
     mutationFn: () => events.regenerateLobbyAccessCode(eventId!),
@@ -221,6 +221,14 @@ export default function EventDashboardPage() {
         onConfigureDoor={(room) => { setConfiguringDoor(room); setOpenPanelRoom(null); }}
         onResetCode={(room) => { setPendingRotate({ kind: "room", id: room.id, name: room.name }); setOpenPanelRoom(null); }}
         onDelete={(room) => { setPendingDeleteRoom(room); setOpenPanelRoom(null); }}
+        onForceStop={async (room) => {
+          try {
+            await stopRoom(room.id);
+            toast.show({ message: `Stopped "${room.name}"` });
+          } catch (e) {
+            toast.show({ message: apiErrorMessage(e), tone: "error" });
+          }
+        }}
       />
     </div>
   );

@@ -28,8 +28,15 @@ public sealed class PublicAccessCodeAuthHandler(
         bool isLobby = false;
         if (path.StartsWith("/r/", StringComparison.Ordinal)) { raw = ExtractSegment(path, 3); }
         else if (path.StartsWith("/e/", StringComparison.Ordinal)) { raw = ExtractSegment(path, 3); isLobby = true; }
-        // Hub negotiate: code is in querystring "?code="
-        if (raw is null && Request.Query.TryGetValue("code", out var q)) raw = q.ToString();
+        // Hub negotiate: code is in querystring "?code=" and the surface hint disambiguates
+        // lobby (event-level) codes from room codes — without this, a lobby connection's
+        // negotiate against /hub/timer would fall through to a room lookup and 401.
+        if (raw is null && Request.Query.TryGetValue("code", out var q))
+        {
+            raw = q.ToString();
+            if (Request.Query.TryGetValue("surface", out var surface) && surface.ToString() == "lobby")
+                isLobby = true;
+        }
 
         if (raw is null || !AccessCode.TryParse(raw, out var code))
             return AuthenticateResult.NoResult();
@@ -48,15 +55,32 @@ public sealed class PublicAccessCodeAuthHandler(
         }
         else
         {
+            // Try room first; if the code matches a lobby code instead, accept that.
+            // The hub negotiate path may arrive without the surface hint when the client
+            // hasn't explicitly tagged itself yet — fall through gracefully.
             var room = await db.Rooms.IgnoreQueryFilters()
                 .Where(r => r.AccessCode == code.Value)
                 .Select(r => new { r.Id, r.EventId, r.TenantId })
                 .FirstOrDefaultAsync();
-            if (room is null) return AuthenticateResult.Fail("Invalid code");
-            context.AccessCode = code.Value;
-            context.RoomId = room.Id;
-            context.EventId = room.EventId;
-            context.TenantId = room.TenantId;
+            if (room is not null)
+            {
+                context.AccessCode = code.Value;
+                context.RoomId = room.Id;
+                context.EventId = room.EventId;
+                context.TenantId = room.TenantId;
+            }
+            else
+            {
+                var ev = await db.Events.IgnoreQueryFilters()
+                    .Where(e => e.LobbyAccessCode == code.Value)
+                    .Select(e => new { e.Id, e.TenantId })
+                    .FirstOrDefaultAsync();
+                if (ev is null) return AuthenticateResult.Fail("Invalid code");
+                context.AccessCode = code.Value;
+                context.EventId = ev.Id;
+                context.TenantId = ev.TenantId;
+                context.IsLobbyCode = true;
+            }
         }
 
         if (context.TenantId is { } tid) tenantContext.Set(tid);

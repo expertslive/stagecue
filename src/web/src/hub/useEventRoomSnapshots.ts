@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LogLevel } from "@microsoft/signalr";
 import { TimerHub, type DisplayPresence, type ConnectionState } from "./timerHub";
 import type { Snapshot } from "@/api/types";
@@ -11,6 +11,8 @@ export interface UseEventRoomSnapshotsResult {
   ready: boolean;
   error: Error | null;
   connectionState: ConnectionState;
+  /** Force-stop a room over the shared hub. Used by the room slide-in panel. Throws if not connected. */
+  stopRoom: (roomId: string) => Promise<Snapshot>;
 }
 
 const emptyPresence: DisplayPresence = { lobby: 0, rooms: {} };
@@ -31,6 +33,13 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
   const [error, setError] = useState<Error | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
 
+  // Held so a parent (the room slide-in panel) can issue commands against the same
+  // connection without opening its own. Captures the latest hub on every (re)connect.
+  const hubRef = useRef<TimerHub | null>(null);
+  // Latest snapshots, read inside `stopRoom` to avoid stale-closure version numbers.
+  const snapshotsRef = useRef<Record<string, Snapshot>>({});
+  snapshotsRef.current = snapshots;
+
   // Stable key so the effect doesn't reconnect on every parent re-render.
   const key = useMemo(() => roomIds.slice().sort().join(","), [roomIds]);
 
@@ -45,6 +54,7 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
     // hub access) don't render as red errors in the operator's console. Real connection
     // problems still surface via the `error` state below.
     const hub = new TimerHub(null, undefined, LogLevel.Critical);
+    hubRef.current = hub;
 
     const offSnap = hub.onSnapshot((snap) => {
       if (cancelled) return;
@@ -75,7 +85,22 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
       }
     });
 
-    hub.start()
+    // SignalR's auto-reconnect only fires after an *established* connection drops. If the
+    // initial start() fails (commonly: StrictMode double-mount in dev racing with the
+    // negotiation), it stays disconnected forever unless we kick it again. Retry once after
+    // a short delay before giving up — covers the dev race without papering over real failures.
+    const startWithRetry = async (): Promise<void> => {
+      try {
+        await hub.start();
+      } catch (firstError) {
+        if (cancelled) throw firstError;
+        await new Promise((r) => setTimeout(r, 250));
+        if (cancelled) throw firstError;
+        await hub.start();
+      }
+    };
+
+    startWithRetry()
       .then(async () => {
         if (cancelled) return;
         setReady(true);
@@ -109,9 +134,29 @@ export function useEventRoomSnapshots(roomIds: string[], eventId?: string): UseE
       offMsg();
       offPresence();
       offConn();
+      if (hubRef.current === hub) hubRef.current = null;
       hub.stop().catch(() => { /* ignore */ });
     };
   }, [key, eventId]);
 
-  return { snapshots, presence, skewMs, ready, error, connectionState };
+  const stopRoom = useCallback(async (roomId: string): Promise<Snapshot> => {
+    const hub = hubRef.current;
+    if (!hub) throw new Error("Not connected — try again in a moment.");
+    if (hub.state !== "connected") {
+      // If the dashboard hub is reconnecting, give it a brief grace window before failing.
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => { off(); reject(new Error("Not connected — try again in a moment.")); }, 3000);
+        const off = hub.onConnectionChange((s) => {
+          if (s === "connected") { clearTimeout(timeout); off(); resolve(); }
+        });
+        if (hub.state === "connected") { clearTimeout(timeout); off(); resolve(); }
+      });
+    }
+    const version = snapshotsRef.current[roomId]?.version ?? 0;
+    const next = await hub.stopRoom(roomId, version);
+    if (next) setSnapshots((prev) => ({ ...prev, [next.roomId]: next }));
+    return next;
+  }, []);
+
+  return { snapshots, presence, skewMs, ready, error, connectionState, stopRoom };
 }

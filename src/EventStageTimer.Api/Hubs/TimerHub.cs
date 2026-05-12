@@ -35,17 +35,32 @@ public sealed class TimerHub(
     private static readonly ConcurrentDictionary<string, int> Presence = new();
 
     /// <summary>
-    /// SignalR creates a fresh DI scope per hub method invocation, so the request-scoped
-    /// <see cref="ITenantContext"/> arrives empty. We rebuild it from the authenticated
-    /// user's <c>tid</c> claim (or the public access code's resolved tenant) before
-    /// touching the DB so EF's strict tenant filter applies correctly.
+    /// SignalR creates a fresh DI scope per hub method invocation, so both the request-scoped
+    /// <see cref="ITenantContext"/> and <see cref="PublicAccessContext"/> arrive empty. We
+    /// rebuild them from the authenticated user's claims (set by the public access code
+    /// handler during the initial connect) before touching the DB so EF's strict tenant
+    /// filter applies correctly and public-scope checks (lobby / per-room) keep working.
     /// </summary>
     private void EnsureTenantContext()
     {
+        // Rehydrate PublicAccessContext from claims if it's empty in this scope.
+        if (publicCtx.TenantId is null && Context.User?.FindFirst("scope") is { } scopeClaim)
+        {
+            var scope = scopeClaim.Value;
+            if (scope is "lobby" or "room")
+            {
+                if (Guid.TryParse(Context.User.FindFirstValue("tid"), out var tid)) publicCtx.TenantId = tid;
+                if (Guid.TryParse(Context.User.FindFirstValue("eid"), out var eid)) publicCtx.EventId = eid;
+                if (Guid.TryParse(Context.User.FindFirstValue("rid"), out var rid)) publicCtx.RoomId = rid;
+                publicCtx.AccessCode = Context.User.FindFirstValue("acl");
+                publicCtx.IsLobbyCode = scope == "lobby";
+            }
+        }
+
         if (tenantContext.TenantId.HasValue) return;
         if (publicCtx.TenantId is { } publicTenant) { tenantContext.Set(publicTenant); return; }
-        var tid = Context.User?.FindFirstValue("tid");
-        if (Guid.TryParse(tid, out var fromClaim)) tenantContext.Set(fromClaim);
+        var tidClaim = Context.User?.FindFirstValue("tid");
+        if (Guid.TryParse(tidClaim, out var fromClaim)) tenantContext.Set(fromClaim);
     }
 
     public override async Task OnConnectedAsync()
@@ -108,12 +123,25 @@ public sealed class TimerHub(
         await base.OnDisconnectedAsync(exception);
     }
 
-    /// <summary>Returns the current snapshot for a room. Caller must have at least Viewer-level access (or be the public-code client for this room).</summary>
+    /// <summary>Returns the current snapshot for a room. Caller must have at least Viewer-level access (or be the public-code client for this room, or a lobby code for this room's event).</summary>
     public async Task<Snapshot?> Resync(Guid roomId)
     {
         EnsureTenantContext();
         if (publicCtx.RoomId == roomId)
             return await commands.GetSnapshotAsync(roomId, Context.ConnectionAborted);
+
+        // Lobby code may resync any room in the same event. The initial fan-out in
+        // OnConnectedAsync occasionally races client-side handler registration in dev,
+        // so the client requests per-room snapshots after connect as a fallback.
+        if (publicCtx.IsLobbyCode && publicCtx.EventId is { } lobbyEventId)
+        {
+            var roomEventId = await db.Rooms
+                .Where(r => r.Id == roomId)
+                .Select(r => (Guid?)r.EventId)
+                .FirstOrDefaultAsync();
+            if (roomEventId == lobbyEventId)
+                return await commands.GetSnapshotAsync(roomId, Context.ConnectionAborted);
+        }
 
         await EnsureRoomAccessAsync(roomId, EventRole.Viewer);
         return await commands.GetSnapshotAsync(roomId, Context.ConnectionAborted);
