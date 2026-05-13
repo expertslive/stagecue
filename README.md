@@ -37,9 +37,24 @@ Logo + a single accent colour drive the whole product; per-token overrides live 
 
 ![Branding setup](docs/screenshots/branding.png)
 
-## Run locally with Docker Compose (recommended)
+## Self-host from a pre-built image
 
-Prereq: Docker.
+The simplest path — no clone, no build. Pulls the multi-arch image
+(`linux/amd64` + `linux/arm64`) from GitHub Container Registry.
+
+```bash
+curl -O https://raw.githubusercontent.com/expertslive/stagecue/main/deploy/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/expertslive/stagecue/main/deploy/.env.example
+$EDITOR .env       # set SA_PASSWORD and APP_BASE_URL
+docker compose up -d
+```
+
+Full guide, image-tag reference, and upgrade steps in
+[**deploy/README.md**](deploy/README.md).
+
+## Run locally with Docker Compose (build from source)
+
+For development on this repo. Prereq: Docker.
 
 ```bash
 docker compose up --build -d
