@@ -1,11 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { X, ExternalLink, Calendar, Sliders, Monitor, ChevronRight, RotateCcw, Trash2, Play, AlertTriangle } from "lucide-react";
+import { X, ExternalLink, Calendar, Sliders, Monitor, ChevronRight, RotateCcw, Trash2, Play, AlertTriangle, Square } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { RoomDto, Snapshot } from "@/api/types";
 import { activeCountdownColor, computeRemaining } from "@/lib/countdownState";
 import { formatRemaining } from "@/lib/time";
 import Button from "@/components/ui/Button";
+import HoldToConfirm from "@/components/ui/HoldToConfirm";
 
 interface Props {
   open: boolean;
@@ -17,6 +18,8 @@ interface Props {
   onConfigureDoor: (room: RoomDto) => void;
   onResetCode: (room: RoomDto) => void;
   onDelete: (room: RoomDto) => void;
+  /** Force-stop a runaway session from the dashboard without opening Control. Hold to confirm. */
+  onForceStop?: (room: RoomDto) => void;
 }
 
 /**
@@ -24,7 +27,7 @@ interface Props {
  * audience displays (with inline QRs), operate, configure, danger. Replaces the cramped
  * 8-item ⋯ dropdown the room tile used to carry.
  */
-export default function RoomPanel({ open, room, snapshot, skewMs, onClose, onEdit, onConfigureDoor, onResetCode, onDelete }: Props) {
+export default function RoomPanel({ open, room, snapshot, skewMs, onClose, onEdit, onConfigureDoor, onResetCode, onDelete, onForceStop }: Props) {
   // Esc closes.
   useEffect(() => {
     if (!open) return;
@@ -75,6 +78,21 @@ export default function RoomPanel({ open, room, snapshot, skewMs, onClose, onEdi
         <div className="flex-1 overflow-y-auto">
           <LiveStatus snapshot={snapshot} skewMs={skewMs} />
 
+          {onForceStop && snapshot && (snapshot.phase === "Running" || snapshot.phase === "Paused" || snapshot.phase === "PreRoll") && (
+            <div className="px-6 pt-3 pb-1">
+              <HoldToConfirm
+                variant="danger"
+                size="md"
+                onConfirm={() => onForceStop(room)}
+                leadingIcon={<Square className="size-3.5 fill-current" />}
+                holdingLabel="Hold to force-stop…"
+                className="w-full"
+              >
+                Force stop session
+              </HoldToConfirm>
+            </div>
+          )}
+
           <Section title="Audience displays">
             <DisplayRow
               url={speakerUrl}
@@ -110,12 +128,6 @@ export default function RoomPanel({ open, room, snapshot, skewMs, onClose, onEdi
               onClick={() => onEdit(room)}
             >
               Room settings (name, pre-roll, programme)
-            </ActionRow>
-            <ActionRow
-              icon={<Monitor className="size-4" />}
-              onClick={() => onConfigureDoor(room)}
-            >
-              Door display layout
             </ActionRow>
             <ActionRow
               icon={<RotateCcw className="size-4" />}

@@ -64,17 +64,19 @@ function deriveStatus(event: EventDto, snapshots: Record<string, Snapshot>, room
     s.phase === "Running" || s.phase === "PreRoll" || s.phase === "Paused",
   ).length;
 
-  if (now < start) {
-    return { kind: "before", label: `Starts ${relativeFuture(start - now)}` };
-  }
-  if (now >= end) {
-    return { kind: "after", label: `Ended ${relativePast(now - end)}` };
-  }
+  // A room actively running trumps the configured event window. Otherwise the header would
+  // claim "Ended 18h ago" while a tile next to it shows the room is still live — observed.
   if (runningRooms > 0) {
     const label = roomCount > 0
       ? `Live · ${runningRooms}/${roomCount} rooms running`
       : runningRooms === 1 ? "Live · 1 room running" : `Live · ${runningRooms} rooms running`;
     return { kind: "live-running", label };
+  }
+  if (now < start) {
+    return { kind: "before", label: `Starts ${relativeFuture(start - now)}` };
+  }
+  if (now >= end) {
+    return { kind: "after", label: `Ended ${relativePast(now - end)}` };
   }
   return { kind: "live-idle", label: "In progress · all rooms idle" };
 }

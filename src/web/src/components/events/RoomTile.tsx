@@ -179,12 +179,17 @@ function describeStatus(snapshot: Snapshot | undefined, skewMs: number): Derived
   }
   if (snapshot.nextItem) {
     const startMs = new Date(snapshot.nextItem.scheduledStartUtc).getTime();
-    return {
-      kind: "idle-upcoming",
-      title: snapshot.nextItem.title,
-      startsAt: new Date(startMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      untilStart: relativeUntil(startMs - (Date.now() + skewMs)),
-    };
+    const serverNow = Date.now() + skewMs;
+    // Drop nextItem if its scheduled start is already in the past — otherwise we render
+    // "Up next at 10:15 · starting now" for a session that should have run yesterday.
+    if (startMs >= serverNow) {
+      return {
+        kind: "idle-upcoming",
+        title: snapshot.nextItem.title,
+        startsAt: new Date(startMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        untilStart: relativeUntil(startMs - serverNow),
+      };
+    }
   }
   if (snapshot.phase === "Ended") return { kind: "ended" };
   return { kind: "idle-empty" };

@@ -105,6 +105,7 @@ export default function ScheduleEditorPage() {
 
       <ScheduleEditor
         items={itemsQuery.data!}
+        programmeSlots={programmeSlots}
         onReorder={(ids) => reorderMutation.mutate(ids)}
         onEdit={(item) => setEditing(item)}
         onDelete={(item) => setPendingDelete(item)}

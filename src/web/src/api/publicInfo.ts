@@ -8,7 +8,26 @@ export interface RoomInfo {
   /** Opaque JSON; parse with parseDoorConfig() from lib/doorDisplayConfig. */
   doorDisplayConfigJson: string;
 }
-export interface LobbyInfo { eventId: string; eventName: string; rooms: { id: string; name: string }[] }
+export interface LobbyScheduleItem {
+  id: string;
+  title: string;
+  speakerName: string | null;
+  scheduledStartUtc: string;
+  durationSec: number;
+}
+export interface LobbyRoom {
+  id: string;
+  name: string;
+  scheduleItems: LobbyScheduleItem[];
+}
+export interface LobbyInfo {
+  eventId: string;
+  eventName: string;
+  startsAtUtc: string;
+  endsAtUtc: string;
+  timeZone: string;
+  rooms: LobbyRoom[];
+}
 
 export const publicInfo = {
   room: (code: string) => api<RoomInfo>(`/r/${code}/info`),

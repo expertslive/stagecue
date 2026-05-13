@@ -11,8 +11,15 @@ namespace EventStageTimer.Api.Controllers;
 public sealed class PublicInfoController(PublicAccessContext ctx, AppDbContext db) : ControllerBase
 {
     public sealed record RoomInfo(Guid RoomId, string RoomName, Guid EventId, string EventName, string DoorDisplayConfigJson);
-    public sealed record LobbyInfo(Guid EventId, string EventName, IReadOnlyList<LobbyRoom> Rooms);
-    public sealed record LobbyRoom(Guid Id, string Name);
+    public sealed record LobbyInfo(
+        Guid EventId,
+        string EventName,
+        DateTime StartsAtUtc,
+        DateTime EndsAtUtc,
+        string TimeZone,
+        IReadOnlyList<LobbyRoom> Rooms);
+    public sealed record LobbyRoom(Guid Id, string Name, IReadOnlyList<LobbyScheduleItem> ScheduleItems);
+    public sealed record LobbyScheduleItem(Guid Id, string Title, string? SpeakerName, DateTime ScheduledStartUtc, int DurationSec);
 
     [HttpGet("/r/{code}/info")]
     public async Task<ActionResult<RoomInfo>> GetRoom(string code, CancellationToken ct)
@@ -37,15 +44,21 @@ public sealed class PublicInfoController(PublicAccessContext ctx, AppDbContext d
         var ev = await db.Events
             .IgnoreQueryFilters()
             .Where(e => e.Id == eid)
-            .Select(e => new { e.Id, e.Name })
+            .Select(e => new { e.Id, e.Name, e.StartsAtUtc, e.EndsAtUtc, e.TimeZone })
             .FirstOrDefaultAsync(ct);
         if (ev is null) return NotFound();
         var rooms = await db.Rooms
             .IgnoreQueryFilters()
             .Where(r => r.EventId == eid)
             .OrderBy(r => r.Name)
-            .Select(r => new LobbyRoom(r.Id, r.Name))
+            .Select(r => new LobbyRoom(
+                r.Id,
+                r.Name,
+                r.ScheduleItems
+                    .OrderBy(s => s.ScheduledStartUtc)
+                    .Select(s => new LobbyScheduleItem(s.Id, s.Title, s.SpeakerName, s.ScheduledStartUtc, s.DurationSec))
+                    .ToList()))
             .ToListAsync(ct);
-        return Ok(new LobbyInfo(ev.Id, ev.Name, rooms));
+        return Ok(new LobbyInfo(ev.Id, ev.Name, ev.StartsAtUtc, ev.EndsAtUtc, ev.TimeZone, rooms));
     }
 }
